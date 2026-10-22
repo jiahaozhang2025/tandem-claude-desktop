@@ -6,8 +6,6 @@ Run Claude Desktop accounts side by side on Windows, with a separate login and d
 
 This Claude version also includes browser sign-in routing and optional sequential Code-history handoff between accounts.
 
-Adapted from [tandem-chatgpt-desktop](https://github.com/jiahaozhang2025/tandem-chatgpt-desktop), MIT, by Jiahao Zhang (source commit `ab224483923320b8afa3a5bfb5e93c354ed13be2`).
-
 ## Install and use
 
 Requires Windows PowerShell 5.1 and the Microsoft Store Claude package (`Claude`). Separate startup was tested locally with Claude 3.1623.1.0 and 3.6556.1.0. Other installation types are not currently supported.
