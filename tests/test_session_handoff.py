@@ -1,0 +1,203 @@
+import importlib.util
+import json
+import sys
+import tempfile
+import unittest
+import uuid
+from pathlib import Path
+from unittest.mock import patch
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "session-handoff.py"
+SPEC = importlib.util.spec_from_file_location("session_handoff", MODULE_PATH)
+h = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = h
+SPEC.loader.exec_module(h)
+
+
+class HandoffTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.root = self.base / "profiles"
+        self.root.mkdir()
+        self.profiles = {}
+        for name in ("main", "account2"):
+            data, code = self.base / name / "data", self.base / name / "code"
+            data.mkdir(parents=True)
+            code.mkdir()
+            account, org = str(uuid.uuid4()), str(uuid.uuid4())
+            self.write_json(data / "config.json", {"lastKnownAccountUuid": account, "auth": "keep-" + name})
+            self.write_json(code / ".claude.json", {"oauthAccount": {"accountUuid": account, "organizationUuid": org}})
+            (code / ".credentials.json").write_text("private-" + name)
+            self.profiles[name] = h.Profile(name, data, code)
+        self.sid, self.cid = "local_" + str(uuid.uuid4()), str(uuid.uuid4())
+        self.record = {
+            "sessionId": self.sid, "cliSessionId": self.cid, "cwd": "C:\\project",
+            "title": "A conversation", "lastActivityAt": 100, "completedTurns": 1,
+            "permissionMode": "auto", "remoteMcpServersConfig": {"token": "do-not-copy"},
+            "bridgeSessionIds": ["private-bridge"], "sshRemoteProcessId": "private-process-handle",
+        }
+        self.write_json(self.profiles["main"].scope() / (self.sid + ".json"), self.record)
+        self.rel = Path("C--project") / (self.cid + ".jsonl")
+        self.transcript = self.profiles["main"].code / "projects" / self.rel
+        self.transcript.parent.mkdir(parents=True)
+        self.transcript.write_text('{"type":"user","message":{"content":"hello"}}\n')
+
+    @staticmethod
+    def write_json(path, value):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(value), encoding="utf-8")
+
+    def execute(self, target):
+        return h.execute(self.root, self.profiles, target)
+
+    def test_preview_is_read_only(self):
+        result = h.summary(h.prepare(self.root, self.profiles, "account2"))
+        self.assertEqual(result["sessions"], 1)
+        self.assertFalse((self.root / "session-store").exists())
+        self.assertFalse((self.root / "handoff-state.json").exists())
+
+    def test_handoff_preserves_session_ids_transcript_and_folder(self):
+        result = self.execute("account2")
+        destination = self.profiles["account2"]
+        record = h.read_json(destination.scope() / (self.sid + ".json"))
+        self.assertEqual(record["sessionId"], self.sid)
+        self.assertEqual(record["cliSessionId"], self.cid)
+        self.assertEqual(record["cwd"], self.record["cwd"])
+        self.assertEqual((destination.code / "projects" / self.rel).read_bytes(), self.transcript.read_bytes())
+        self.assertEqual(result["sessions"], 1)
+
+    def test_credentials_and_prior_permissions_do_not_travel(self):
+        self.execute("account2")
+        target = self.profiles["account2"]
+        self.assertEqual((target.code / ".credentials.json").read_text(), "private-account2")
+        self.assertEqual(h.read_json(target.data / "config.json")["auth"], "keep-account2")
+        record = h.read_json(target.scope() / (self.sid + ".json"))
+        self.assertEqual(record["permissionMode"], "default")
+        for key in ("remoteMcpServersConfig", "bridgeSessionIds", "sshRemoteProcessId"):
+            self.assertNotIn(key, record)
+
+    def test_new_turn_survives_switching_back(self):
+        self.execute("account2")
+        target = self.profiles["account2"]
+        transcript = target.code / "projects" / self.rel
+        with transcript.open("a") as stream:
+            stream.write('{"type":"assistant","message":{"content":"continued"}}\n')
+        changed = dict(self.record, lastActivityAt=200)
+        self.write_json(target.scope() / (self.sid + ".json"), changed)
+        self.execute("main")
+        self.assertEqual(self.transcript.read_bytes(), transcript.read_bytes())
+        self.assertEqual(h.read_json(self.profiles["main"].scope() / (self.sid + ".json"))["lastActivityAt"], 200)
+
+    def test_missing_transcript_is_reported_not_invented(self):
+        missing = dict(self.record, sessionId="local_" + str(uuid.uuid4()), cliSessionId=str(uuid.uuid4()))
+        self.write_json(self.profiles["main"].scope() / (missing["sessionId"] + ".json"), missing)
+        result = self.execute("account2")
+        self.assertEqual(result["unavailable"][0]["sessionId"], missing["sessionId"])
+        self.assertFalse((self.profiles["account2"].scope() / (missing["sessionId"] + ".json")).exists())
+        self.assertTrue((self.profiles["main"].scope() / (missing["sessionId"] + ".json")).exists())
+
+    def test_skipped_history_stays_visible_in_later_reports(self):
+        missing = dict(self.record, sessionId="local_" + str(uuid.uuid4()), cliSessionId=str(uuid.uuid4()))
+        self.write_json(self.profiles["main"].scope() / (missing["sessionId"] + ".json"), missing)
+        self.execute("account2")
+        self.assertEqual(len(self.execute("main")["unavailable"]), 1)
+
+    def test_divergent_conversations_are_not_overwritten(self):
+        self.execute("account2")
+        destination = self.profiles["account2"].code / "projects" / self.rel
+        destination.write_text('{"type":"user","message":{"content":"different"}}\n')
+        original = self.transcript.read_bytes()
+        with self.assertRaisesRegex(h.HandoffError, "Divergent"):
+            self.execute("main")
+        self.assertEqual(self.transcript.read_bytes(), original)
+
+    def test_active_rewind_is_not_silently_replaced_by_old_history(self):
+        first_line = self.transcript.read_bytes()
+        with self.transcript.open("a") as stream:
+            stream.write('{"type":"assistant","message":{"content":"second turn"}}\n')
+        self.execute("account2")
+        target = self.profiles["account2"].code / "projects" / self.rel
+        target.write_bytes(first_line)
+        with self.assertRaisesRegex(h.HandoffError, "rewound or truncated"):
+            self.execute("main")
+        self.assertEqual(target.read_bytes(), first_line)
+        self.assertEqual(h.read_json(self.root / "handoff-state.json")["owner"], "account2")
+
+    def test_partial_json_line_blocks_handoff(self):
+        with self.transcript.open("a") as stream:
+            stream.write('{"type":')
+        with self.assertRaisesRegex(h.HandoffError, "No complete"):
+            self.execute("account2")
+        self.assertFalse((self.root / "handoff-state.json").exists())
+
+    def test_transaction_rolls_back_after_publish_failure(self):
+        original = h.Transaction.write
+        def fail_on_metadata(tx, destination, **kwargs):
+            if destination == self.profiles["account2"].scope() / (self.sid + ".json"):
+                raise OSError("injected disk failure")
+            return original(tx, destination, **kwargs)
+        with patch.object(h.Transaction, "write", fail_on_metadata):
+            with self.assertRaisesRegex(OSError, "injected"):
+                self.execute("account2")
+        self.assertFalse((self.profiles["account2"].code / "projects" / self.rel).exists())
+        self.assertFalse((self.root / "handoff-state.json").exists())
+        self.assertTrue(self.transcript.exists())
+        self.assertFalse((self.root / "handoff.lock").exists())
+
+    def test_lock_prevents_two_handoffs(self):
+        (self.root / "handoff.lock").write_text("locked")
+        with self.assertRaisesRegex(h.HandoffError, "lock"):
+            self.execute("account2")
+
+    def test_missing_account_does_not_guess(self):
+        self.write_json(self.profiles["account2"].data / "config.json", {})
+        with self.assertRaisesRegex(h.HandoffError, "Sign in"):
+            self.execute("account2")
+
+    def test_ambiguous_organization_does_not_guess(self):
+        target = self.profiles["account2"]
+        account = h.read_json(target.data / "config.json")["lastKnownAccountUuid"]
+        self.write_json(target.code / ".claude.json", {})
+        for _ in range(2):
+            (target.data / "claude-code-sessions" / account / str(uuid.uuid4())).mkdir(parents=True)
+        with self.assertRaisesRegex(h.HandoffError, "organization"):
+            self.execute("account2")
+
+    def test_remote_mid_turn_blocks_without_killing_processes(self):
+        remote = dict(self.record, sshConfig={"sshHost": "example"}, sshReattach={"midTurn": True})
+        self.write_json(self.profiles["main"].scope() / (self.sid + ".json"), remote)
+        with self.assertRaisesRegex(h.HandoffError, "mid-turn"):
+            self.execute("account2")
+        self.assertFalse((self.root / "session-store").exists())
+
+    def test_ssh_handles_are_never_treated_as_os_pids(self):
+        remote = dict(self.record, sshConfig={"sshHost": "example"}, sshRemoteProcessId=str(uuid.uuid4()))
+        self.write_json(self.profiles["main"].scope() / (self.sid + ".json"), remote)
+        result = self.execute("account2")
+        self.assertEqual(result["sshSessions"], 1)
+        self.assertFalse(result["sshWorkerStateVerified"])
+
+    def test_history_sidecars_are_preserved(self):
+        sidecar = self.transcript.parent / self.cid / "subagents" / "agent-test.jsonl"
+        sidecar.parent.mkdir(parents=True)
+        sidecar.write_text('{"type":"assistant"}\n')
+        self.execute("account2")
+        target = self.profiles["account2"].code / "projects" / sidecar.relative_to(self.profiles["main"].code / "projects")
+        self.assertEqual(target.read_bytes(), sidecar.read_bytes())
+
+    def test_backups_keep_overwritten_destination(self):
+        destination = self.profiles["account2"].code / "projects" / self.rel
+        destination.parent.mkdir(parents=True)
+        destination.write_bytes(self.transcript.read_bytes())
+        original = destination.read_bytes()
+        with self.transcript.open("a") as stream:
+            stream.write('{"type":"assistant"}\n')
+        result = self.execute("account2")
+        backups = list(Path(result["backup"]).glob("*.bak"))
+        self.assertTrue(any(p.read_bytes() == original for p in backups))
+
+
+if __name__ == "__main__":
+    unittest.main()

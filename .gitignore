@@ -1,0 +1,21 @@
+testResults.xml
+coverage.xml
+*.log
+__pycache__/
+*.pyc
+
+# Local profiles, conversation histories, and credentials must stay off GitHub.
+electron/
+claude-code/
+session-store/
+handoff-backups/
+handoff-state.json
+handoff-shortcuts.json
+handoff.lock
+signin.json
+profile.json
+auth.json
+.claude.json
+*.jsonl
+.env
+.env.*
