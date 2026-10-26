@@ -8,7 +8,7 @@ This Claude version also includes browser sign-in routing and optional sequentia
 
 ## Install and use
 
-Requires Windows PowerShell 5.1 and the Microsoft Store Claude package (`Claude`). Separate startup was tested locally with Claude 3.1623.1.0 and 3.6556.1.0. Other installation types are not currently supported.
+Requires Windows PowerShell 5.1 and the Microsoft Store Claude package (`Claude`). Separate startup was tested locally with Claude 3.1623.1.0, 3.6556.1.0 and 3.6556.2.0. Other installation types are not currently supported.
 
 ```powershell
 git clone https://github.com/jiahaozhang2025/tandem-claude-desktop.git
@@ -82,7 +82,7 @@ SSH history caches can travel, but **pause remote turns in the original app firs
 
 Missing, ambiguous or malformed transcripts are reported in the command result and `handoff-state.json` and remain untouched in their original profile. They are not presented as successfully transferred history. The tool refuses divergent transcript branches instead of overwriting one with the other. Per-file backups and a journal live under `handoff-backups/`; handled failures roll back the attempted transfer. A central copy lives under `session-store/`. A process lock prevents overlapping handoffs. These folders are local conversation data and are retained by the default uninstall.
 
-The first handoff discovers saved records across the local profiles' existing account/organization folders. Later switches take updates from the last account used by the launcher. Use the companion shortcuts for this sequential workflow, and avoid separately editing the same conversation from another CLI or app instance.
+The first handoff discovers saved records across the local profiles' existing account/organization folders. Later switches take updates to existing conversations from the last account used by the launcher. They also discover new conversations created in another profile, including through the native app shortcut, and import their transcripts and session-specific sidecars. Existing conversations edited outside the active profile are not merged through this discovery step. Use the companion shortcuts for this sequential workflow, and avoid separately editing the same conversation from another CLI or app instance.
 
 The app install, OS integrations, taskbar grouping, browser extensions, system credentials and machine-level services remain shared. URL handling is shared except during the temporary sign-in operation described above. Concurrent Cowork VM behavior and authenticated Claude Code execution have not been validated. The launcher does not claim to isolate those services. Each instance uses additional memory. App updates can change behavior; the executable path is resolved again at each launch.
 

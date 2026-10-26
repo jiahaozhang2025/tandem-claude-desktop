@@ -259,10 +259,11 @@ function Disable-ClaudeProfileSignIn {
 }
 
 function Invoke-SessionHandoffHelper {
-    param([Parameter(Mandatory)][string]$Helper, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name, [switch]$Preview)
+    param([Parameter(Mandatory)][string]$Helper, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name, [switch]$Preview, [switch]$Pending)
     $python = Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $arguments = @($Helper, '--root', $Root, '--target', $Name)
     if ($Preview) { $arguments += '--preview' }
+    if ($Pending) { $arguments += '--pending' }
     $resultText = & $python.Source @arguments
     if ($LASTEXITCODE -ne 0) { throw ($resultText | ConvertFrom-Json).error }
     $resultText | ConvertFrom-Json
@@ -286,10 +287,12 @@ function Switch-ClaudeProfile {
     )
     Assert-ProfileName -Name $Name
     $rootPath = Resolve-ProfileRoot -Root $Root
+    $helper = Join-Path (Split-Path $PSScriptRoot -Parent) 'session-handoff.py'
+    if (-not (Test-Path -LiteralPath $helper)) { throw 'The session handoff helper is missing; reinstall the launcher.' }
     $stateFile = Join-Path $rootPath 'handoff-state.json'
     if (-not $Preview -and (Test-Path -LiteralPath $stateFile)) {
         $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
-        if ($state.owner -eq $Name) {
+        if ($state.owner -eq $Name -and (Invoke-SessionHandoffHelper -Helper $helper -Root $rootPath -Name $Name -Pending).newSessions -eq 0) {
             $open = @(Get-ClaudeMainProcess)
             if ($open.Count -eq 1 -and $Name -ne 'main') {
                 $layout = Get-ProfileLayout -Name $Name -Root $rootPath
@@ -308,8 +311,6 @@ function Switch-ClaudeProfile {
             }
         }
     }
-    $helper = Join-Path (Split-Path $PSScriptRoot -Parent) 'session-handoff.py'
-    if (-not (Test-Path -LiteralPath $helper)) { throw 'The session handoff helper is missing; reinstall the launcher.' }
     $plan = Invoke-SessionHandoffHelper -Helper $helper -Root $rootPath -Name $Name -Preview
     if ($Preview) { return $plan }
     if ($plan.sessions -eq 0) { throw 'No complete coding-session histories are available for handoff.' }

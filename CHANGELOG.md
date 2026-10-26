@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 — 2026-10-26
+
+* Fix missing sessions created in another account through the native Claude shortcut while the launcher still considered a different profile active.
+* Discover new session IDs across profiles and import their transcripts and session-specific sidecars without merging unrelated edits to existing conversations.
+* Check for newly created sessions before merely activating an already running profile, so clicking the destination shortcut can synchronize those sessions too.
+* Retain credential isolation, transcript conflict checks, SSH mid-turn guards, and transaction backups.
+
 ## 0.2.0 — 2026-10-22
 
 First standalone preview release, adapted from the MIT-licensed [tandem-chatgpt-desktop](https://github.com/jiahaozhang2025/tandem-chatgpt-desktop) project.

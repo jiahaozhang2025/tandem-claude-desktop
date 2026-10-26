@@ -349,4 +349,28 @@ Describe 'Sequential handoff launcher guards' {
         Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
         Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 0 -ParameterFilter { -not $Preview }
     }
+    It 'activates the current profile when no new sessions are waiting elsewhere' {
+        '{"owner":"work"}' | Set-Content -LiteralPath (Join-Path $switchRoot 'handoff-state.json')
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
+            [pscustomobject]@{ CommandLine = ('Claude.exe --user-data-dir="' + (Join-Path $switchRoot 'work\electron') + '"') }
+        }
+        Mock -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper { [pscustomobject]@{ newSessions = 0 } } -ParameterFilter { $Pending }
+        Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { [pscustomobject]@{ Status = 'AlreadyRunning' } }
+        (Switch-ClaudeProfile work -Root $switchRoot).Status | Should -Be 'AlreadyRunning'
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 1 -Exactly
+        Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 0 -ParameterFilter { -not $Pending }
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
+    }
+    It 'does not skip synchronization when a new session exists outside the current owner' {
+        '{"owner":"work"}' | Set-Content -LiteralPath (Join-Path $switchRoot 'handoff-state.json')
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
+            [pscustomobject]@{ CommandLine = ('Claude.exe --user-data-dir="' + (Join-Path $switchRoot 'work\electron') + '"') }
+        }
+        Mock -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper { [pscustomobject]@{ newSessions = 1 } } -ParameterFilter { $Pending }
+        Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { }
+        Switch-ClaudeProfile work -Root $switchRoot -WhatIf
+        Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 1 -Exactly -ParameterFilter { $Preview }
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
+    }
 }

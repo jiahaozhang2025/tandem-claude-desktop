@@ -90,6 +90,81 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual(self.transcript.read_bytes(), transcript.read_bytes())
         self.assertEqual(h.read_json(self.profiles["main"].scope() / (self.sid + ".json"))["lastActivityAt"], 200)
 
+    def add_session_outside_last_owner(self, remote=False):
+        sid, cid = "local_" + str(uuid.uuid4()), str(uuid.uuid4())
+        record = dict(self.record, sessionId=sid, cliSessionId=cid, title="New session outside launcher", lastActivityAt=200)
+        if remote:
+            record.update(sshConfig={"sshHost": "example"}, sshReattach={"midTurn": False})
+        self.write_json(self.profiles["main"].scope() / (sid + ".json"), record)
+        folder = "ssh-" + cid if remote else "C--project"
+        transcript = self.profiles["main"].code / "projects" / folder / (cid + ".jsonl")
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text('{"type":"user","message":{"content":"new conversation"}}\n')
+        return record, transcript
+
+    def test_new_session_in_inactive_profile_is_discovered_and_transferred(self):
+        self.execute("account2")
+        record, transcript = self.add_session_outside_last_owner()
+        self.assertEqual(h.pending_new_sessions(self.root, self.profiles), 1)
+        self.assertFalse((self.root / "session-store" / "records" / (record["sessionId"] + ".json")).exists())
+        result = self.execute("account2")
+        self.assertEqual(result["sessions"], 2)
+        destination = self.profiles["account2"]
+        self.assertEqual(h.read_json(destination.scope() / (record["sessionId"] + ".json"))["cliSessionId"], record["cliSessionId"])
+        rel = transcript.relative_to(self.profiles["main"].code / "projects")
+        self.assertEqual((destination.code / "projects" / rel).read_bytes(), transcript.read_bytes())
+        self.assertEqual(h.pending_new_sessions(self.root, self.profiles), 0)
+        self.assertEqual((destination.code / ".credentials.json").read_text(), "private-account2")
+
+    def test_new_ssh_cache_and_sidecars_are_imported_without_stale_reattach(self):
+        self.execute("account2")
+        record, transcript = self.add_session_outside_last_owner(remote=True)
+        sidecar = transcript.parent / ".owner"
+        sidecar.write_text("synthetic-cache-owner")
+        result = self.execute("account2")
+        self.assertEqual(result["sshSessions"], 1)
+        destination = self.profiles["account2"]
+        copied = h.read_json(destination.scope() / (record["sessionId"] + ".json"))
+        self.assertNotIn("sshReattach", copied)
+        self.assertEqual(copied["sshConfig"], record["sshConfig"])
+        rel = sidecar.relative_to(self.profiles["main"].code / "projects")
+        self.assertEqual((destination.code / "projects" / rel).read_bytes(), sidecar.read_bytes())
+
+    def test_inactive_existing_edits_are_not_imported_with_a_new_session(self):
+        self.execute("account2")
+        self.add_session_outside_last_owner()
+        self.transcript.write_text('{"type":"user","message":{"content":"inactive edit"}}\n')
+        original = (self.profiles["account2"].code / "projects" / self.rel).read_bytes()
+        self.execute("account2")
+        self.assertEqual((self.profiles["account2"].code / "projects" / self.rel).read_bytes(), original)
+        self.assertNotEqual(self.transcript.read_bytes(), original)
+
+    def test_new_session_with_conflicting_existing_transcript_is_refused(self):
+        self.execute("account2")
+        record = dict(self.record, sessionId="local_" + str(uuid.uuid4()))
+        self.write_json(self.profiles["main"].scope() / (record["sessionId"] + ".json"), record)
+        self.transcript.write_text('{"type":"user","message":{"content":"conflicting"}}\n')
+        with self.assertRaisesRegex(h.HandoffError, "newly discovered session conflicts"):
+            self.execute("account2")
+        self.assertFalse((self.profiles["account2"].scope() / (record["sessionId"] + ".json")).exists())
+
+    def test_new_inactive_remote_mid_turn_still_blocks_transfer(self):
+        self.execute("account2")
+        record, _ = self.add_session_outside_last_owner(remote=True)
+        record["sshReattach"]["midTurn"] = True
+        self.write_json(self.profiles["main"].scope() / (record["sessionId"] + ".json"), record)
+        with self.assertRaisesRegex(h.HandoffError, "mid-turn"):
+            self.execute("account2")
+
+    def test_previously_reported_missing_session_does_not_force_activation_sync(self):
+        self.execute("account2")
+        record, transcript = self.add_session_outside_last_owner()
+        transcript.unlink()
+        self.assertEqual(h.pending_new_sessions(self.root, self.profiles), 1)
+        result = self.execute("account2")
+        self.assertIn(record["sessionId"], [r["sessionId"] for r in result["unavailable"]])
+        self.assertEqual(h.pending_new_sessions(self.root, self.profiles), 0)
+
     def test_missing_transcript_is_reported_not_invented(self):
         missing = dict(self.record, sessionId="local_" + str(uuid.uuid4()), cliSessionId=str(uuid.uuid4()))
         self.write_json(self.profiles["main"].scope() / (missing["sessionId"] + ".json"), missing)

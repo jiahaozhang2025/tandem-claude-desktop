@@ -245,6 +245,40 @@ def check_remote_writers(records):
             raise HandoffError("An SSH session is marked mid-turn. Stop that turn in the original app before switching.")
 
 
+def new_records_in_other_profiles(profiles, owner, known):
+    """Discover new conversations without taking over an existing owner's edits."""
+    discovered = []
+    for name, profile in profiles.items():
+        if name == owner:
+            continue
+        incoming = {sid: record for sid, record in records_at(profile, all_scopes=True).items() if sid not in known}
+        if incoming:
+            discovered.append((profile, incoming))
+    return discovered
+
+
+def pending_new_sessions(root, profiles):
+    """Cheap metadata-only check before activating an already running profile."""
+    state = read_json(root / "handoff-state.json", {})
+    owner = state.get("owner", "main")
+    if owner not in profiles:
+        raise HandoffError("The last history owner is unavailable.")
+    known = {p.stem for p in (root / "session-store" / "records").glob("local_*.json")}
+    known.update(records_at(profiles[owner], all_scopes=True))
+    known.update(item["sessionId"] for item in state.get("unavailable", []))
+    return len({sid for _, incoming in new_records_in_other_profiles(profiles, owner, known) for sid in incoming})
+
+
+def projects_for_sessions(projects, records):
+    """Select only each new session's transcript and session-specific sidecars."""
+    ids = {r.get("cliSessionId") for r in records.values()}
+    ids = {cid.lower() for cid in ids if isinstance(cid, str) and UUID.fullmatch(cid)}
+    folders = ids | {"ssh-" + cid for cid in ids}
+    return {rel: path for rel, path in projects.items()
+            if any(part.lower() in folders for part in Path(rel).parts[:-1])
+            or Path(rel).name.split(".", 1)[0].lower() in ids}
+
+
 def prepare(root, profiles, target):
     if target not in profiles:
         raise HandoffError(f"Unknown destination profile: {target}")
@@ -267,6 +301,21 @@ def prepare(root, profiles, target):
             if prior is None or record.get("lastActivityAt", 0) >= prior.get("lastActivityAt", 0):
                 raw_records[sid] = record
         projects = merge_projects(projects, files_under(source.code / "projects"), reject_truncation=bool(state))
+    if state:
+        # The native app shortcut can create sessions outside the last owner.
+        # Import those new IDs, but never merge unrelated existing histories or
+        # stale metadata from an inactive account into the active conversation.
+        known = set(records) | set(raw_records)
+        for source, incoming in new_records_in_other_profiles(profiles, owner, known):
+            selected = projects_for_sessions(files_under(source.code / "projects"), incoming)
+            for rel, path in selected.items():
+                if rel in projects and digest(projects[rel]) != digest(path):
+                    raise HandoffError(f"A newly discovered session conflicts with shared history; no copy was overwritten: {rel}")
+            projects = merge_projects(projects, selected, reject_truncation=True)
+            for sid, record in incoming.items():
+                prior = raw_records.get(sid)
+                if prior is None or record.get("lastActivityAt", 0) > prior.get("lastActivityAt", 0):
+                    raw_records[sid] = record
     for sid, obj in raw_records.items():
         if sid not in records or obj.get("lastActivityAt", 0) >= records[sid].get("lastActivityAt", 0):
             records[sid] = sanitized_record(obj)
@@ -359,12 +408,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--target", required=True)
-    parser.add_argument("--preview", action="store_true")
+    inspection = parser.add_mutually_exclusive_group()
+    inspection.add_argument("--preview", action="store_true")
+    inspection.add_argument("--pending", action="store_true")
     args = parser.parse_args()
     try:
         root = safe_path(args.root)
         profiles = profiles_at(root, Path(os.environ["USERPROFILE"]), Path(os.environ["APPDATA"]))
-        if args.preview:
+        if args.pending:
+            result = {"newSessions": pending_new_sessions(root, profiles)}
+        elif args.preview:
             result = summary(prepare(root, profiles, args.target))
         else:
             # This script is also safe to invoke directly: never publish into a
