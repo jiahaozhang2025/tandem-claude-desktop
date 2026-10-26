@@ -26,7 +26,7 @@ if ($destinationPath -eq [IO.Path]::GetFullPath($source).TrimEnd('\')) {
 if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
     $moduleTarget = Join-Path -Path $destinationPath -ChildPath 'tandem-claude-desktop'
     $null = New-Item -ItemType Directory -Force -Path $moduleTarget
-    foreach ($file in 'claude-profile.ps1', 'profile-auth.ps1', 'session-handoff.py', 'uninstall.ps1', 'README.md', 'LICENSE') {
+    foreach ($file in 'claude-profile.ps1', 'profile-auth.ps1', 'session-handoff.py', 'taskbar-helper.ps1', 'taskbar-identity.cs', 'uninstall.ps1', 'README.md', 'CHANGELOG.md', 'VALIDATION.md', 'LICENSE') {
         Copy-Item -LiteralPath (Join-Path -Path $source -ChildPath $file) -Destination $destinationPath -Force
     }
     foreach ($file in 'tandem-claude-desktop.psd1', 'tandem-claude-desktop.psm1') {

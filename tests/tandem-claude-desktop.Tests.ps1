@@ -2,10 +2,84 @@
 
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\tandem-claude-desktop') -Force
+    Mock -ModuleName tandem-claude-desktop Start-ProfileTaskbarHelper { }
     function New-TestProfile([string]$Root) {
         $dir = Join-Path $Root 'work'
         $null = New-Item -ItemType Directory -Force -Path "$dir\electron", "$dir\claude-code"
         '{"name":"work","label":"Work","shortcuts":[]}' | Set-Content -LiteralPath "$dir\profile.json"
+    }
+}
+
+Describe 'Taskbar profile identities' {
+    It 'exports the taskbar setup command used by the installed CLI' {
+        Get-Command Set-ClaudeProfileTaskbar -Module tandem-claude-desktop | Should -Not -BeNullOrEmpty
+    }
+    It 'keeps stable, distinct, case-insensitive identities within the Windows length limit' {
+        InModuleScope tandem-claude-desktop {
+            $first = Get-TaskbarAppId 'C:\Profiles' account2
+            $first | Should -Be (Get-TaskbarAppId 'c:\profiles\' ACCOUNT2)
+            $first | Should -Not -Be (Get-TaskbarAppId 'C:\Profiles' main)
+            $first | Should -Not -Be (Get-TaskbarAppId 'C:\Other' account2)
+            (Get-TaskbarAppId 'C:\Profiles' ('a' * 64)).Length | Should -BeLessOrEqual 128
+        }
+    }
+    It 'uses short, separate account shortcuts for pinned-icon relaunch commands' {
+        InModuleScope tandem-claude-desktop -Parameters @{ R = $TestDrive } {
+            param($R)
+            Get-TaskbarLaunchCommand $R main | Should -BeLike '*explorer.exe*main-launcher\taskbar-launch.lnk*'
+            Get-TaskbarLaunchCommand $R account2 | Should -BeLike '*explorer.exe*account2\taskbar-launch.lnk*'
+        }
+    }
+    It 'round-trips a shortcut identity without changing its launch target or arguments' {
+        InModuleScope tandem-claude-desktop -Parameters @{ R = $TestDrive } {
+            param($R)
+            Initialize-TaskbarApi
+            $path = Join-Path $R 'test.lnk'
+            $shell = New-Object -ComObject WScript.Shell
+            try {
+                $link = $shell.CreateShortcut($path)
+                $link.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'
+                $link.Arguments = 'synthetic.txt'
+                $link.Save()
+                [Tandem.Claude.TaskbarIdentity]::SetShortcut($path, 'Tandem.Claude.Test')
+                [Tandem.Claude.TaskbarIdentity]::ReadShortcut($path) | Should -Be 'Tandem.Claude.Test'
+                $read = $shell.CreateShortcut($path)
+                $read.Arguments | Should -Be 'synthetic.txt'
+                $read.TargetPath | Should -Be $link.TargetPath
+                [Tandem.Claude.TaskbarIdentity]::SetShortcut($path, $null)
+                [Tandem.Claude.TaskbarIdentity]::ReadShortcut($path) | Should -BeNullOrEmpty
+            } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        }
+    }
+    It 'sets and restores window identities and relaunch details on an invisible test window' {
+        InModuleScope tandem-claude-desktop {
+            Initialize-TaskbarApi
+            Add-Type -AssemblyName System.Windows.Forms
+            $form = New-Object Windows.Forms.Form
+            try {
+                $handle = $form.Handle
+                $original = [Tandem.Claude.TaskbarIdentity]::ReadWindow($handle, 5)
+                [Tandem.Claude.TaskbarIdentity]::Apply($handle, 'Tandem.Claude.Test', 'synthetic.exe', 'Synthetic profile', 'nonexistent-test.ico')
+                [Tandem.Claude.TaskbarIdentity]::ReadWindow($handle, 5) | Should -Be 'Tandem.Claude.Test'
+                [Tandem.Claude.TaskbarIdentity]::ReadWindow($handle, 2) | Should -Be 'synthetic.exe'
+                [Tandem.Claude.TaskbarIdentity]::ReadWindow($handle, 4) | Should -Be 'Synthetic profile'
+                [Tandem.Claude.TaskbarIdentity]::RestoreAll()
+                [Tandem.Claude.TaskbarIdentity]::ReadWindow($handle, 5) | Should -Be $original
+            } finally { [Tandem.Claude.TaskbarIdentity]::RestoreAll(); $form.Dispose() }
+        }
+    }
+    It 'ignores a reused helper process ID belonging to a different command' {
+        InModuleScope tandem-claude-desktop -Parameters @{ R = $TestDrive } {
+            param($R)
+            '{"pid":123}' | Set-Content -LiteralPath (Join-Path $R 'taskbar-helper.json')
+            Mock Get-CimInstance { [pscustomobject]@{ Name = 'powershell.exe'; CommandLine = 'powershell.exe -File unrelated.ps1' } }
+            Get-TaskbarHelperProcess $R | Should -BeNullOrEmpty
+        }
+    }
+    It 'does not launch the primary app when WhatIf is requested' {
+        Mock -ModuleName tandem-claude-desktop Start-PrimaryClaude { }
+        Start-ClaudeProfile main -Root $TestDrive -WhatIf
+        Should -Invoke -ModuleName tandem-claude-desktop Start-PrimaryClaude -Times 0
     }
 }
 

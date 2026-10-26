@@ -28,6 +28,114 @@ $script:Palette = [ordered]@{
 
 #region Private helpers
 
+function Initialize-TaskbarApi {
+    if (-not ('Tandem.Claude.TaskbarIdentity' -as [type])) {
+        Add-Type -Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'taskbar-identity.cs')
+    }
+}
+
+function Get-TaskbarAppId {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name)
+    Assert-ProfileName $Name
+    $normalized = (Resolve-ProfileRoot $Root).ToLowerInvariant()
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { $hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($normalized))[0..5] | ForEach-Object { $_.ToString('x2') }) }
+    finally { $sha.Dispose() }
+    'Tandem.Claude.' + $hash + '.' + $Name.ToLowerInvariant()
+}
+
+function Get-TaskbarLaunchCommand {
+    param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name)
+    $directory = Join-Path (Resolve-ProfileRoot $Root) 'main-launcher'
+    if ($Name -ne 'main') { $directory = (Get-ProfileLayout $Name $Root).Dir }
+    # Window relaunch properties have a short string limit. Delegate through a
+    # private copy of the account shortcut, retaining its full launch arguments.
+    '"{0}" "{1}"' -f (Join-Path $env:SystemRoot 'explorer.exe'), (Join-Path $directory 'taskbar-launch.lnk')
+}
+
+function Get-TaskbarProfile {
+    param([Parameter(Mandatory)][string]$Root)
+    $settings = Get-Content -LiteralPath (Join-Path $Root 'taskbar.json') -Raw | ConvertFrom-Json
+    [pscustomobject]@{ Name = 'main'; Label = 'Claude (Main)'; UserData = (Join-Path $env:APPDATA 'Claude');
+        Icon = $settings.mainIcon; AppId = (Get-TaskbarAppId $Root main); Command = (Get-TaskbarLaunchCommand $Root main) }
+    foreach ($folder in @(Get-ChildItem -LiteralPath $Root -Directory)) {
+        $metaPath = Join-Path $folder.FullName 'profile.json'
+        if (-not (Test-Path -LiteralPath $metaPath)) { continue }
+        $layout = Get-ProfileLayout $folder.Name $Root
+        $meta = Read-ProfileMeta $layout
+        $icon = Get-ChildItem -LiteralPath $layout.Dir -Filter 'icon-*.ico' -File | Select-Object -First 1
+        if ($null -eq $icon) { continue }
+        [pscustomobject]@{ Name = $layout.Name; Label = ('Claude (' + $meta.label + ')'); UserData = $layout.UserData;
+            Icon = $icon.FullName; AppId = (Get-TaskbarAppId $Root $layout.Name); Command = (Get-TaskbarLaunchCommand $Root $layout.Name) }
+    }
+}
+
+function Get-TaskbarHelperProcess {
+    param([Parameter(Mandatory)][string]$Root)
+    $statePath = Join-Path $Root 'taskbar-helper.json'
+    if (-not (Test-Path -LiteralPath $statePath)) { return }
+    try { $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json } catch { return }
+    $helper = Join-Path (Split-Path $PSScriptRoot -Parent) 'taskbar-helper.ps1'
+    Get-CimInstance -ClassName Win32_Process -Filter ("ProcessId=" + [int]$state.pid) | Where-Object {
+        $_.Name -eq 'powershell.exe' -and $_.CommandLine -and
+        $_.CommandLine.IndexOf(('"' + $helper + '"'), [StringComparison]::OrdinalIgnoreCase) -ge 0 -and
+        $_.CommandLine.IndexOf(('-Root "' + $Root + '"'), [StringComparison]::OrdinalIgnoreCase) -ge 0
+    }
+}
+
+function Start-ProfileTaskbarHelper {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; the calling launcher checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    $settings = Join-Path $Root 'taskbar.json'
+    if (-not (Test-Path -LiteralPath $settings) -or -not (Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json).enabled) { return }
+    if ($null -ne (Get-TaskbarHelperProcess $Root)) { return }
+    $helper = Join-Path (Split-Path $PSScriptRoot -Parent) 'taskbar-helper.ps1'
+    $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" -Root "{1}"' -f $helper, $Root
+    $null = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList $arguments -WindowStyle Hidden
+}
+
+function Stop-ProfileTaskbarHelper {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; the calling command checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    if ($null -eq (Get-TaskbarHelperProcess $Root)) { return }
+    $stopPath = Join-Path $Root 'taskbar-stop'
+    $null = New-Item -ItemType File -Path $stopPath -Force
+    for ($attempt = 0; $attempt -lt 30; $attempt++) {
+        if ($null -eq (Get-TaskbarHelperProcess $Root)) { return }
+        Start-Sleep -Milliseconds 250
+    }
+    throw 'The taskbar helper is still stopping. Try again in a few seconds.'
+}
+
+function Set-ShortcutTaskbarIdentity {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; shortcut creation checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name)
+    $settings = Join-Path $Root 'taskbar.json'
+    if (-not (Test-Path -LiteralPath $settings)) { return }
+    Initialize-TaskbarApi
+    $id = $null
+    if ((Get-Content -LiteralPath $settings -Raw | ConvertFrom-Json).enabled) { $id = Get-TaskbarAppId $Root $Name }
+    [Tandem.Claude.TaskbarIdentity]::SetShortcut($Path, $id)
+}
+
+function Start-PrimaryClaude {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; the calling launcher checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    $app = Get-ClaudePackage
+    $directory = Join-Path $Root 'main-launcher'
+    $null = New-Item -ItemType Directory -Path $directory -Force
+    $wrapper = Join-Path $directory 'launch.cmd'
+    @('@echo off', 'set "CLAUDE_CONFIG_DIR="',
+        ('start "" "' + $app.Exe + '" --user-data-dir="' + (Join-Path $env:APPDATA 'Claude') + '"')) |
+        Set-Content -LiteralPath $wrapper -Encoding Ascii
+    Invoke-InPackage -FamilyName $app.FamilyName -ScriptPath $wrapper
+    Start-ProfileTaskbarHelper -Root $Root
+}
+
 function Assert-NoLinkedAncestor {
     param([Parameter(Mandatory)][string]$Path)
     $current = [IO.Path]::GetFullPath($Path)
@@ -306,6 +414,7 @@ function Switch-ClaudeProfile {
                 if (-not $pathMatch.Success -or $pathMatch.Groups['path'].Value -eq $primaryPath) {
                     $primaryApp = Get-ClaudePackage
                     $null = Invoke-CommandInDesktopPackage -PackageFamilyName $primaryApp.FamilyName -AppId $script:AppId -Command $primaryApp.Exe -Args ('--user-data-dir="' + $primaryPath + '"') -PreventBreakaway
+                    Start-ProfileTaskbarHelper -Root $rootPath
                     return [pscustomobject]@{ Name = 'main'; Status = 'AlreadyRunning' }
                 }
             }
@@ -344,13 +453,7 @@ function Switch-ClaudeProfile {
         $null = New-ClaudeProfile -Name $managedProfile.Name -Root $rootPath -Label $managedProfile.Label
     }
     if ($Name -eq 'main') {
-        $launcherDir = Join-Path $rootPath 'main-launcher'
-        $null = New-Item -ItemType Directory -Path $launcherDir -Force
-        $wrapper = Join-Path $launcherDir 'launch.cmd'
-        @('@echo off', 'set "CLAUDE_CONFIG_DIR="',
-            ('start "" "' + $app.Exe + '" --user-data-dir="' + $primaryData + '"')) |
-            Set-Content -LiteralPath $wrapper -Encoding Ascii
-        Invoke-InPackage -FamilyName $app.FamilyName -ScriptPath $wrapper
+        Start-PrimaryClaude -Root $rootPath
     } else { $null = Start-ClaudeProfile -Name $Name -Root $rootPath }
     $result
 }
@@ -365,12 +468,20 @@ function Save-MainSwitchShortcut {
             $path = Join-Path $folder 'Claude (Main).lnk'
             $link = $shell.CreateShortcut($path)
             $link.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-            $link.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" switch main -Root "{1}" -Gui' -f $cli, $Root
+            $command = 'launch'
+            if (Test-Path -LiteralPath (Join-Path $Root 'handoff-state.json')) { $command = 'switch' }
+            $link.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" {1} main -Root "{2}" -Gui' -f $cli, $command, $Root
             $link.WorkingDirectory = $Root
             $link.IconLocation = $App.Exe + ',0'
             $link.WindowStyle = 7
             $link.Description = 'Switch to the primary Claude account with saved coding history'
             $link.Save()
+            Set-ShortcutTaskbarIdentity -Path $path -Root $Root -Name main
+            if (Test-Path -LiteralPath (Join-Path $Root 'taskbar.json')) {
+                $directory = Join-Path $Root 'main-launcher'
+                $null = New-Item -ItemType Directory -Path $directory -Force
+                Copy-Item -LiteralPath $path -Destination (Join-Path $directory 'taskbar-launch.lnk') -Force
+            }
             $paths += $path
         }
     } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
@@ -629,6 +740,10 @@ function Save-ProfileShortcut {
         $link.WindowStyle = 7
         $link.Description = "Claude, separate profile '$($Layout.Name)'"
         $link.Save()
+        Set-ShortcutTaskbarIdentity -Path $path -Root $Layout.Root -Name $Layout.Name
+        if (Test-Path -LiteralPath (Join-Path $Layout.Root 'taskbar.json')) {
+            Copy-Item -LiteralPath $path -Destination (Join-Path $Layout.Dir 'taskbar-launch.lnk') -Force
+        }
     } finally {
         $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
     }
@@ -873,6 +988,35 @@ function Get-CheckResult {
 
 #region Public commands
 
+function Set-ClaudeProfileTaskbar {
+    <#
+    .SYNOPSIS
+    Gives Claude accounts separate taskbar identities and colored icons.
+    .DESCRIPTION
+    A hidden helper maintains window properties while Claude is running. It does
+    not patch or inject into Claude. Disable restores the live window properties.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Root = (Get-DefaultProfileRoot), [switch]$Disable)
+    $rootPath = Resolve-ProfileRoot $Root
+    if (-not $PSCmdlet.ShouldProcess($rootPath, 'Update per-account Claude taskbar identities')) { return }
+    $null = New-Item -ItemType Directory -Path $rootPath -Force
+    Stop-ProfileTaskbarHelper -Root $rootPath
+    $app = Get-ClaudePackage
+    $mainDir = Join-Path $rootPath 'main-launcher'
+    Assert-NoLinkedAncestor -Path $mainDir
+    $null = New-Item -ItemType Directory -Path $mainDir -Force
+    $mainIcon = Save-ProfileIcon -App $app -Layout ([pscustomobject]@{ Dir = $mainDir }) -ColorHex $script:Palette.Orange
+    @{ enabled = (-not $Disable); mainIcon = $mainIcon } | ConvertTo-Json |
+        Set-Content -LiteralPath (Join-Path $rootPath 'taskbar.json') -Encoding UTF8
+    Save-MainSwitchShortcut -Root $rootPath -App $app
+    foreach ($managedProfile in @(Get-ClaudeProfile -Root $rootPath)) {
+        $null = New-ClaudeProfile -Name $managedProfile.Name -Root $rootPath -Label $managedProfile.Label
+    }
+    Start-ProfileTaskbarHelper -Root $rootPath
+    [pscustomobject]@{ Enabled = (-not $Disable); Root = $rootPath }
+}
+
 function New-ClaudeProfile {
     <#
     .SYNOPSIS
@@ -934,6 +1078,7 @@ function New-ClaudeProfile {
             shortcuts = $shortcuts
         })
     Write-ProfileLog -Layout $layout -Message "profile created or updated (label '$Label')"
+    Start-ProfileTaskbarHelper -Root $layout.Root
     Get-ClaudeProfile -Name $Name -Root $layout.Root
 }
 
@@ -951,6 +1096,12 @@ function Start-ClaudeProfile {
         [string]$Root = (Get-DefaultProfileRoot),
         [ValidateRange(1, 600)][int]$VerifySeconds = 45
     )
+    if ($Name -eq 'main') {
+        $rootPath = Resolve-ProfileRoot $Root
+        if (-not $PSCmdlet.ShouldProcess('Primary Claude account', 'Start')) { return }
+        Start-PrimaryClaude -Root $rootPath
+        return [pscustomobject]@{ Name = 'main'; Status = 'Opened' }
+    }
     $layout = Get-ProfileLayout -Name $Name -Root $Root
     if (-not (Test-Path -LiteralPath $layout.Meta)) {
         throw "Profile '$Name' does not exist in $($layout.Root). Create it first: claude-profile new $Name"
@@ -965,6 +1116,7 @@ function Start-ClaudeProfile {
     $alreadyRunning = @(Get-ProfileProcess -Layout $layout).Count -gt 0
     $started = Get-Date
     Invoke-InPackage -FamilyName $app.FamilyName -ScriptPath $layout.LaunchCmd
+    Start-ProfileTaskbarHelper -Root $layout.Root
     Write-ProfileLog -Layout $layout -Message "launch requested (app $($app.Version), already running: $alreadyRunning)"
     if ($alreadyRunning -and (Test-ProfileIsolation -Layout $layout)) {
         # Same data folder, so the running instance just comes to the front.
@@ -1139,4 +1291,4 @@ function Test-ClaudeProfileSupport {
 
 #endregion
 
-Export-ModuleMember -Function New-ClaudeProfile, Start-ClaudeProfile, Stop-ClaudeProfile, Get-ClaudeProfile, Remove-ClaudeProfile, Test-ClaudeProfileSupport, Enable-ClaudeProfileSignIn, Disable-ClaudeProfileSignIn, Switch-ClaudeProfile
+Export-ModuleMember -Function New-ClaudeProfile, Start-ClaudeProfile, Stop-ClaudeProfile, Get-ClaudeProfile, Remove-ClaudeProfile, Test-ClaudeProfileSupport, Enable-ClaudeProfileSignIn, Disable-ClaudeProfileSignIn, Switch-ClaudeProfile, Set-ClaudeProfileTaskbar

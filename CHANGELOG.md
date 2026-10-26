@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0 — 2026-10-26
+
+* Add optional separate taskbar groups and colored running-window icons for each Claude account.
+* Give account shortcuts matching taskbar identities so each account can be pinned separately. Pinned-icon relaunches keep using the account's history-switching command.
+* Maintain identities on new Claude windows through a hidden helper that exits when Claude is closed. Disabling the feature restores the live windows' previous taskbar properties.
+* Add native shell-property integration checks for shortcut preservation and window-property restoration.
+
 ## 0.2.1 — 2026-10-26
 
 * Fix missing sessions created in another account through the native Claude shortcut while the launcher still considered a different profile active.

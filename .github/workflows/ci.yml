@@ -22,7 +22,7 @@ jobs:
         shell: powershell
         run: |
           Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
-          $paths = 'tandem-claude-desktop', 'claude-profile.ps1', 'profile-auth.ps1', 'install.ps1', 'uninstall.ps1'
+          $paths = 'tandem-claude-desktop', 'claude-profile.ps1', 'profile-auth.ps1', 'taskbar-helper.ps1', 'install.ps1', 'uninstall.ps1'
           $issues = $paths | ForEach-Object { Invoke-ScriptAnalyzer -Path $_ -Recurse -Settings ./PSScriptAnalyzerSettings.psd1 }
           $issues | Format-Table -AutoSize -Wrap
           if ($issues) { exit 1 }

@@ -28,6 +28,7 @@ Open **Claude (Account 2)** on the desktop or Start menu for ordinary use. For f
 | `signin <name>` | Temporarily route the next browser login callback to this running profile |
 | `cancel-signin` | Restore normal Claude link handling immediately |
 | `switch <main\|name> [-Preview]` | Hand off saved Code history to the other account, then open it |
+| `taskbar [-Disable]` | Give each account its own taskbar group, colored icon and pinned-icon launch command |
 | `list` | List profiles and running status; does not inspect credentials |
 | `stop <name>` | Force-stop only that profile and its descendants; save work first |
 | `remove <name> [-KeepData] [-Force]` | Remove shortcuts and optionally profile data, with confirmation |
@@ -59,6 +60,18 @@ Every new launch must have a matching desktop parent, live Electron children rep
 
 Profiles contain `electron/`, `claude-code/`, `profile.json`, colored icons, `launch.cmd` and `launcher.log`. Credentials are protected by the app's normal Windows mechanisms; these profiles are not a security boundary against other programs running as you.
 
+## Separate taskbar icons
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" taskbar
+```
+
+This refreshes the account shortcuts and gives each account a different Windows taskbar identity. **Claude (Main)** uses an orange icon and other profiles use their selected color. Pin each account's desktop shortcut or running taskbar button separately if you want both icons available while an account is closed. A previously pinned generic Claude shortcut keeps its original behavior; use the account-specific shortcuts for profile switching.
+
+Taskbar relaunches use the same account shortcut, preserving sequential history handoff when it is enabled. Changing taskbar groups does not synchronize two concurrent writers to the same coding conversation.
+
+A hidden PowerShell helper maintains the account identities on Claude's windows, including new windows. It starts with the companion launcher and exits after Claude has been closed for 30 seconds. It changes Windows shell properties and window icons without patching Claude or loading code into it. It does not change global taskbar settings. `taskbar -Disable` stops the helper and restores the live windows' previous taskbar properties.
+
 ## Continue the same coding conversation under another account
 
 Sequential session handoff requires **Python 3.10 or newer**. It preserves the Desktop session ID, Claude Code transcript ID, full available transcript, sidecars and working-folder paths. New turns carry back on the next switch. It is a snapshot handoff between accounts, not two windows controlling one running backend.
@@ -84,7 +97,7 @@ Missing, ambiguous or malformed transcripts are reported in the command result a
 
 The first handoff discovers saved records across the local profiles' existing account/organization folders. Later switches take updates to existing conversations from the last account used by the launcher. They also discover new conversations created in another profile, including through the native app shortcut, and import their transcripts and session-specific sidecars. Existing conversations edited outside the active profile are not merged through this discovery step. Use the companion shortcuts for this sequential workflow, and avoid separately editing the same conversation from another CLI or app instance.
 
-The app install, OS integrations, taskbar grouping, browser extensions, system credentials and machine-level services remain shared. URL handling is shared except during the temporary sign-in operation described above. Concurrent Cowork VM behavior and authenticated Claude Code execution have not been validated. The launcher does not claim to isolate those services. Each instance uses additional memory. App updates can change behavior; the executable path is resolved again at each launch.
+The app install, browser extensions, system credentials and machine-level services remain shared. Taskbar groups can be separated as described above; other OS integrations remain shared. URL handling is shared except during the temporary sign-in operation described above. Concurrent Cowork VM behavior and authenticated Claude Code execution have not been validated. The launcher does not claim to isolate those services. Each instance uses additional memory. App updates can change behavior; the executable path is resolved again at each launch.
 
 Profile paths must be ASCII, without `%`, and cannot pass through directory links. Profile removal deletes nested directory links themselves without traversing their targets.
 

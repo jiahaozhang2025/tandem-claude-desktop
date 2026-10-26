@@ -9,6 +9,7 @@
   claude-profile signin <name>
   claude-profile cancel-signin
   claude-profile switch <main|name> [-Preview]
+  claude-profile taskbar [-Disable]
   claude-profile list
   claude-profile stop <name>
   claude-profile remove <name> [-KeepData] [-Force]
@@ -23,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('new', 'launch', 'signin', 'cancel-signin', 'switch', 'list', 'stop', 'remove', 'doctor', 'help')]
+    [ValidateSet('new', 'launch', 'signin', 'cancel-signin', 'switch', 'taskbar', 'list', 'stop', 'remove', 'doctor', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1)][string]$Name,
@@ -36,6 +37,7 @@ param(
     [switch]$Force,
     [switch]$Deep,
     [switch]$Preview,
+    [switch]$Disable,
     # Used by shortcuts: report errors in a message box because there is no console.
     [switch]$Gui
 )
@@ -72,6 +74,7 @@ try {
         }
         'cancel-signin' { Disable-ClaudeProfileSignIn }
         'switch' { Switch-ClaudeProfile -Name $Name -Preview:$Preview @common | Format-List }
+        'taskbar' { Set-ClaudeProfileTaskbar -Disable:$Disable @common | Format-List }
         'list' { Get-ClaudeProfile @common | Format-Table -AutoSize | Out-String | Write-Output }
         'stop' { Stop-ClaudeProfile -Name $Name @common }
         'remove' {

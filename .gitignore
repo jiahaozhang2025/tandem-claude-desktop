@@ -19,3 +19,7 @@ auth.json
 *.jsonl
 .env
 .env.*
+taskbar-helper.json
+taskbar.json
+taskbar-stop
+*.lnk
