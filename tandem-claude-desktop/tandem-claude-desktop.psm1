@@ -991,13 +991,17 @@ function Get-CheckResult {
 function Set-ClaudeProfileTaskbar {
     <#
     .SYNOPSIS
-    Gives Claude accounts separate taskbar identities and colored icons.
+    Chooses grouped or separate taskbar icons for Claude accounts.
     .DESCRIPTION
     A hidden helper maintains window properties while Claude is running. It does
     not patch or inject into Claude. Disable restores the live window properties.
     #>
     [CmdletBinding(SupportsShouldProcess)]
-    param([string]$Root = (Get-DefaultProfileRoot), [switch]$Disable)
+    param([string]$Root = (Get-DefaultProfileRoot), [ValidateSet('Grouped', 'Separate')][string]$Mode = 'Separate', [switch]$Disable)
+    if ($Disable) { $Mode = 'Grouped' }
+    $separate = $Mode -eq 'Separate'
+    $selectedMode = 'Grouped'
+    if ($separate) { $selectedMode = 'Separate' }
     $rootPath = Resolve-ProfileRoot $Root
     if (-not $PSCmdlet.ShouldProcess($rootPath, 'Update per-account Claude taskbar identities')) { return }
     $null = New-Item -ItemType Directory -Path $rootPath -Force
@@ -1007,14 +1011,14 @@ function Set-ClaudeProfileTaskbar {
     Assert-NoLinkedAncestor -Path $mainDir
     $null = New-Item -ItemType Directory -Path $mainDir -Force
     $mainIcon = Save-ProfileIcon -App $app -Layout ([pscustomobject]@{ Dir = $mainDir }) -ColorHex $script:Palette.Orange
-    @{ enabled = (-not $Disable); mainIcon = $mainIcon } | ConvertTo-Json |
+    @{ mode = $selectedMode; enabled = $separate; mainIcon = $mainIcon } | ConvertTo-Json |
         Set-Content -LiteralPath (Join-Path $rootPath 'taskbar.json') -Encoding UTF8
     Save-MainSwitchShortcut -Root $rootPath -App $app
     foreach ($managedProfile in @(Get-ClaudeProfile -Root $rootPath)) {
         $null = New-ClaudeProfile -Name $managedProfile.Name -Root $rootPath -Label $managedProfile.Label
     }
-    Start-ProfileTaskbarHelper -Root $rootPath
-    [pscustomobject]@{ Enabled = (-not $Disable); Root = $rootPath }
+    if ($separate) { Start-ProfileTaskbarHelper -Root $rootPath }
+    [pscustomobject]@{ Mode = $selectedMode; Enabled = $separate; Root = $rootPath }
 }
 
 function New-ClaudeProfile {

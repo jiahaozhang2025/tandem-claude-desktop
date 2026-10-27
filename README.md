@@ -28,7 +28,7 @@ Open **Claude (Account 2)** on the desktop or Start menu for ordinary use. For f
 | `signin <name>` | Temporarily route the next browser login callback to this running profile |
 | `cancel-signin` | Restore normal Claude link handling immediately |
 | `switch <main\|name> [-Preview]` | Hand off saved Code history to the other account, then open it |
-| `taskbar [-Disable]` | Give each account its own taskbar group, colored icon and pinned-icon launch command |
+| `taskbar [grouped\|separate] [-Disable]` | Save the taskbar grouping choice and update the running windows and account shortcuts |
 | `list` | List profiles and running status; does not inspect credentials |
 | `stop <name>` | Force-stop only that profile and its descendants; save work first |
 | `remove <name> [-KeepData] [-Force]` | Remove shortcuts and optionally profile data, with confirmation |
@@ -60,17 +60,22 @@ Every new launch must have a matching desktop parent, live Electron children rep
 
 Profiles contain `electron/`, `claude-code/`, `profile.json`, colored icons, `launch.cmd` and `launcher.log`. Credentials are protected by the app's normal Windows mechanisms; these profiles are not a security boundary against other programs running as you.
 
-## Separate taskbar icons
+## Taskbar grouping option
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" taskbar
+# Separate colored icons for each account:
+& "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" taskbar separate
+# Restore the app's normal grouped taskbar button:
+& "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" taskbar grouped
 ```
 
-This refreshes the account shortcuts and gives each account a different Windows taskbar identity. **Claude (Main)** uses an orange icon and other profiles use their selected color. Pin each account's desktop shortcut or running taskbar button separately if you want both icons available while an account is closed. A previously pinned generic Claude shortcut keeps its original behavior; use the account-specific shortcuts for profile switching.
+The choice is saved per profile root and survives future launches and upgrades. A fresh root uses the app's normal grouping until separate mode is selected. Running `taskbar` without a mode still selects separate mode; `taskbar -Disable` remains an alias for grouped mode. You can choose during installation with `install.ps1 -TaskbarMode Grouped` or `install.ps1 -TaskbarMode Separate`, optionally with `-Root`. Omitting that installer option preserves the existing choice.
+
+Separate mode refreshes the account shortcuts and gives each account a different Windows taskbar identity. **Claude (Main)** uses an orange icon and other profiles use their selected color. Pin each account's desktop shortcut or running taskbar button separately if you want both icons available while an account is closed. Windows keeps copies of pinned shortcuts; if a pin retains the old layout after changing modes, unpin it and pin the refreshed shortcut. Use the account-specific shortcuts for profile switching.
 
 Taskbar relaunches use the same account shortcut, preserving sequential history handoff when it is enabled. Changing taskbar groups does not synchronize two concurrent writers to the same coding conversation.
 
-A hidden PowerShell helper maintains the account identities on Claude's windows, including new windows. It starts with the companion launcher and exits after Claude has been closed for 30 seconds. It changes Windows shell properties and window icons without patching Claude or loading code into it. It does not change global taskbar settings. `taskbar -Disable` stops the helper and restores the live windows' previous taskbar properties.
+A hidden PowerShell helper maintains separate account identities on Claude's windows, including new windows. It starts with the companion launcher and exits after Claude has been closed for 30 seconds. It changes Windows shell properties and window icons without patching Claude or loading code into it. Grouped mode stops the helper and restores the live windows' previous taskbar properties without restarting Claude. The option does not change global taskbar settings or account isolation.
 
 ## Continue the same coding conversation under another account
 

@@ -12,7 +12,9 @@
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
-    [string]$Destination = (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Programs\tandem-claude-desktop')
+    [string]$Destination = (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Programs\tandem-claude-desktop'),
+    [ValidateSet('Grouped', 'Separate')][string]$TaskbarMode,
+    [string]$Root
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,4 +50,10 @@ if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
     Write-Output "  `"$cli`" new account2 -Label `"Account 2`""
     Write-Output 'Then open the new shortcut and sign in. Check your setup any time with:'
     Write-Output "  `"$cli`" doctor -Deep"
+    if ($TaskbarMode) {
+        $arguments = @('taskbar', $TaskbarMode)
+        if ($Root) { $arguments += @('-Root', $Root) }
+        & $cli @arguments
+        if ($LASTEXITCODE -ne 0) { throw 'Installed the launcher, but configuring the taskbar mode failed.' }
+    }
 }

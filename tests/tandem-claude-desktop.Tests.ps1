@@ -1,4 +1,4 @@
-#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5.0' }
+﻿#Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.5.0' }
 
 BeforeAll {
     Import-Module (Join-Path $PSScriptRoot '..\tandem-claude-desktop') -Force
@@ -11,6 +11,35 @@ BeforeAll {
 }
 
 Describe 'Taskbar profile identities' {
+    It 'persists the selected taskbar mode: <Mode>' -ForEach @(
+        @{ Mode = 'Grouped'; ExpectedEnabled = $false }, @{ Mode = 'Separate'; ExpectedEnabled = $true }
+    ) {
+        Mock -ModuleName tandem-claude-desktop Stop-ProfileTaskbarHelper { }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudePackage { [pscustomobject]@{} }
+        Mock -ModuleName tandem-claude-desktop Save-ProfileIcon { 'synthetic.ico' }
+        Mock -ModuleName tandem-claude-desktop Save-MainSwitchShortcut { }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeProfile { }
+        $result = Set-ClaudeProfileTaskbar -Root $TestDrive -Mode $Mode
+        $result.Mode | Should -Be $Mode
+        $config = Get-Content (Join-Path $TestDrive 'taskbar.json') -Raw | ConvertFrom-Json
+        $config.mode | Should -Be $Mode
+        $config.enabled | Should -Be $ExpectedEnabled
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-ProfileTaskbarHelper -Times 1 -Exactly
+    }
+    It 'keeps Disable as an alias for grouped mode' {
+        Mock -ModuleName tandem-claude-desktop Stop-ProfileTaskbarHelper { }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudePackage { [pscustomobject]@{} }
+        Mock -ModuleName tandem-claude-desktop Save-ProfileIcon { 'synthetic.ico' }
+        Mock -ModuleName tandem-claude-desktop Save-MainSwitchShortcut { }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeProfile { }
+        (Set-ClaudeProfileTaskbar -Root $TestDrive -Disable).Mode | Should -Be 'Grouped'
+    }
+    It 'rejects invalid modes and leaves configuration untouched under WhatIf' {
+        $untouchedRoot = Join-Path $TestDrive 'whatif-taskbar'
+        { Set-ClaudeProfileTaskbar -Root $untouchedRoot -Mode invalid } | Should -Throw
+        Set-ClaudeProfileTaskbar -Root $untouchedRoot -Mode Grouped -WhatIf
+        Test-Path (Join-Path $untouchedRoot 'taskbar.json') | Should -BeFalse
+    }
     It 'exports the taskbar setup command used by the installed CLI' {
         Get-Command Set-ClaudeProfileTaskbar -Module tandem-claude-desktop | Should -Not -BeNullOrEmpty
     }

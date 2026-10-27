@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1 — 2026-10-26
+
+* Add explicit persistent taskbar choices: `taskbar grouped` and `taskbar separate`.
+* Add installer option `-TaskbarMode Grouped|Separate`; upgrades preserve the saved preference when it is omitted.
+* Retain `taskbar -Disable` as an alias for grouped mode. Switching modes updates live windows without restarting Claude.
+
 ## 0.3.0 — 2026-10-26
 
 * Add optional separate taskbar groups and colored running-window icons for each Claude account.

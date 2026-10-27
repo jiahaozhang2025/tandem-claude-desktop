@@ -9,7 +9,7 @@
   claude-profile signin <name>
   claude-profile cancel-signin
   claude-profile switch <main|name> [-Preview]
-  claude-profile taskbar [-Disable]
+  claude-profile taskbar [grouped|separate] [-Disable]
   claude-profile list
   claude-profile stop <name>
   claude-profile remove <name> [-KeepData] [-Force]
@@ -74,7 +74,11 @@ try {
         }
         'cancel-signin' { Disable-ClaudeProfileSignIn }
         'switch' { Switch-ClaudeProfile -Name $Name -Preview:$Preview @common | Format-List }
-        'taskbar' { Set-ClaudeProfileTaskbar -Disable:$Disable @common | Format-List }
+        'taskbar' {
+            $mode = 'Separate'
+            if ($Name) { $mode = $Name }
+            Set-ClaudeProfileTaskbar -Mode $mode -Disable:$Disable @common | Format-List
+        }
         'list' { Get-ClaudeProfile @common | Format-Table -AutoSize | Out-String | Write-Output }
         'stop' { Stop-ClaudeProfile -Name $Name @common }
         'remove' {
