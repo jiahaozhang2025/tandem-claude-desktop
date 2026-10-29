@@ -6,6 +6,16 @@ Run Claude Desktop accounts side by side on Windows, with a separate login and d
 
 This Claude version also includes browser sign-in routing and optional sequential Code-history handoff between accounts.
 
+## Open all accounts
+
+After installing or upgrading, use **Claude (All Accounts)** on your desktop or Start menu. It opens your primary account and every configured profile. Already running accounts are skipped without activating or restarting them. You can also run:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" launch-all
+```
+
+This command opens independent account windows; it does not transfer or merge conversation history. Other profiles are still attempted if one fails, and failures are reported. Installers create the shortcuts automatically; use `-NoAllAccountsShortcut` to opt out. `-Root` selects which profile collection the shortcut opens. Uninstall removes its own All Accounts shortcuts while preserving links reassigned to another root.
+
 ## Install and use
 
 Requires Windows PowerShell 5.1 and the Microsoft Store Claude package (`Claude`). Separate startup was tested locally with Claude 3.1623.1.0, 3.6556.1.0 and 3.6556.2.0. Other installation types are not currently supported.
@@ -24,6 +34,7 @@ Open **Claude (Account 2)** on the desktop or Start menu for ordinary use. For f
 | Command | Behavior |
 | --- | --- |
 | `new <name> [-Label <text>] [-Color <color>]` | Create or refresh profile shortcuts, retaining profile data |
+| `launch-all` | Open every configured account, skipping those already running |
 | `launch <name>` | Launch the profile, or activate its running instance |
 | `signin <name>` | Temporarily route the next browser login callback to this running profile |
 | `cancel-signin` | Restore normal Claude link handling immediately |
@@ -98,7 +109,7 @@ Only session metadata and `claude-code/projects` histories travel. Cookies, OAut
 
 SSH history caches can travel, but **pause remote turns in the original app first**. The tool rejects sessions marked mid-turn, clears stale reattachment handles, and preserves the SSH host and working folder. It does not kill remote workers or verify their live status. Reconnecting and continuing an SSH session under the other account still requires validation on that host.
 
-Missing, ambiguous or malformed transcripts are reported in the command result and `handoff-state.json` and remain untouched in their original profile. They are not presented as successfully transferred history. The tool refuses divergent transcript branches instead of overwriting one with the other. Per-file backups and a journal live under `handoff-backups/`; handled failures roll back the attempted transfer. A central copy lives under `session-store/`. A process lock prevents overlapping handoffs. These folders are local conversation data and are retained by the default uninstall.
+Missing, ambiguous or malformed transcripts are reported in the command result and `handoff-state.json` and remain untouched in their original profile. They are not presented as successfully transferred history. The tool refuses divergent transcript branches instead of overwriting one with the other. Independent edits in a previously published destination also block handoff, even when that account was opened outside the launcher. It does not merge competing turns or select a winner: keep each branch as a separate fork, or choose which copy to continue before reconciling. Preflight checks these conflicts and remote mid-turn flags before closing any windows, and the publish transaction checks them again after local writers stop. All Accounts opens windows without running this handoff. Per-file backups and a journal live under `handoff-backups/`; handled failures roll back the attempted transfer. A central copy lives under `session-store/`. A process lock prevents overlapping handoffs. These folders are local conversation data and are retained by the default uninstall.
 
 The first handoff discovers saved records across the local profiles' existing account/organization folders. Later switches take updates to existing conversations from the last account used by the launcher. They also discover new conversations created in another profile, including through the native app shortcut, and import their transcripts and session-specific sidecars. Existing conversations edited outside the active profile are not merged through this discovery step. Use the companion shortcuts for this sequential workflow, and avoid separately editing the same conversation from another CLI or app instance.
 

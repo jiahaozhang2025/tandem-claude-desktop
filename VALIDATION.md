@@ -1,4 +1,14 @@
-# Validation — October 26, 2026
+# Validation
+
+## October 29, 2026
+
+* 76 Pester tests passed on Windows PowerShell 5.1 and PowerShell 7; 26 Python handoff tests passed. PSScriptAnalyzer found no warnings or errors in the production scripts.
+* All Accounts coverage includes neither/either/both accounts running, custom roots with spaces, unmanaged profiles, partial launch failure, WhatIf, shortcut creation, and safe uninstall ownership checks. App launches in these tests are mocked.
+* Installed Desktop and Start menu All Accounts shortcuts for both companion apps. Live `launch-all` calls with both accounts already running left all four desktop parent process IDs unchanged. Taskbar preference and Claude handoff-state hashes were unchanged by the installer upgrades.
+* Claude 4.29.0.0 ran both signed-in profiles. The All Accounts command bypasses history transfer. Known conflicts and saved SSH mid-turn flags are checked before closing any windows for a sequential handoff and rechecked at publication; tests verify conflicts leave windows and history untouched.
+* Existing independent conversation copies were not reconciled, forked, or overwritten. Closed-account launch combinations were tested with mocks rather than interrupting live work.
+
+## October 26, 2026
 
 Tested locally on Windows with the Microsoft Store Claude package (`Claude`), versions 3.1623.1.0, 3.6556.1.0 and 3.6556.2.0. These checks apply to this implementation and those app versions; later Claude updates can change compatibility.
 

@@ -6,6 +6,7 @@
   claude-profile new <name> [-Label <text>] [-Color <color>]
                              [-NoDesktopShortcut] [-NoStartMenuShortcut]
   claude-profile launch <name>
+  claude-profile launch-all
   claude-profile signin <name>
   claude-profile cancel-signin
   claude-profile switch <main|name> [-Preview]
@@ -24,7 +25,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('new', 'launch', 'signin', 'cancel-signin', 'switch', 'taskbar', 'list', 'stop', 'remove', 'doctor', 'help')]
+    [ValidateSet('new', 'launch-all', 'launch', 'signin', 'cancel-signin', 'switch', 'taskbar', 'list', 'stop', 'remove', 'doctor', 'help')]
     [string]$Command = 'help',
 
     [Parameter(Position = 1)][string]$Name,
@@ -67,6 +68,7 @@ try {
                 Write-Output "Next: open the 'Claude ($($result.Label))' shortcut (or run 'claude-profile launch $Name') and sign in."
             }
         }
+        'launch-all' { Start-ClaudeAllAccounts @common | Format-Table -AutoSize }
         'launch' { $null = Start-ClaudeProfile -Name $Name @common }
         'signin' {
             $null = Start-ClaudeProfile -Name $Name @common

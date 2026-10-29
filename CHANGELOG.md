@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2 — 2026-10-29
+
+* Add `claude-profile launch-all` and Desktop/Start menu **Claude (All Accounts)** shortcuts, installed by default. Open only missing accounts; skip running accounts without activating or restarting them.
+* Discover all configured profiles on each use and report launch failures after attempting the other accounts.
+* Check history conflicts and remote turns before closing windows for a handoff; repeat validation inside the publish transaction. Independent conversation branches remain intact.
+
 ## 0.3.1 — 2026-10-26
 
 * Add explicit persistent taskbar choices: `taskbar grouped` and `taskbar separate`.

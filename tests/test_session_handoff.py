@@ -68,6 +68,29 @@ class HandoffTests(unittest.TestCase):
         self.assertEqual((destination.code / "projects" / self.rel).read_bytes(), self.transcript.read_bytes())
         self.assertEqual(result["sessions"], 1)
 
+    def test_preflight_is_read_only(self):
+        before = {p: p.read_bytes() for p in self.base.rglob("*") if p.is_file()}
+        h.validate_plan(h.prepare(self.root, self.profiles, "account2"))
+        self.assertEqual(before, {p: p.read_bytes() for p in self.base.rglob("*") if p.is_file()})
+
+    def test_preflight_rejects_independent_destination_edits_without_writes(self):
+        self.execute("account2")
+        self.execute("main")
+        destination = self.profiles["account2"].code / "projects" / self.rel
+        with destination.open("a") as stream:
+            stream.write('{"type":"user","message":{"content":"independent edit"}}\n')
+        before = {p: p.read_bytes() for p in self.base.rglob("*") if p.is_file()}
+        with self.assertRaisesRegex(h.HandoffError, "Destination history changed"):
+            h.validate_plan(h.prepare(self.root, self.profiles, "account2"))
+        self.assertEqual(before, {p: p.read_bytes() for p in self.base.rglob("*") if p.is_file()})
+
+    def test_preflight_rejects_remote_mid_turn(self):
+        record = dict(self.record, sshConfig={"host": "example.test"}, sshReattach={"midTurn": True})
+        self.write_json(self.profiles["main"].scope() / (self.sid + ".json"), record)
+        with self.assertRaisesRegex(h.HandoffError, "mid-turn"):
+            h.validate_plan(h.prepare(self.root, self.profiles, "account2"))
+        self.assertFalse((self.root / "handoff.lock").exists())
+
     def test_credentials_and_prior_permissions_do_not_travel(self):
         self.execute("account2")
         target = self.profiles["account2"]

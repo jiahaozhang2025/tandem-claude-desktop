@@ -367,11 +367,12 @@ function Disable-ClaudeProfileSignIn {
 }
 
 function Invoke-SessionHandoffHelper {
-    param([Parameter(Mandatory)][string]$Helper, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name, [switch]$Preview, [switch]$Pending)
+    param([Parameter(Mandatory)][string]$Helper, [Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name, [switch]$Preview, [switch]$Pending, [switch]$Check)
     $python = Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1
     $arguments = @($Helper, '--root', $Root, '--target', $Name)
     if ($Preview) { $arguments += '--preview' }
     if ($Pending) { $arguments += '--pending' }
+    if ($Check) { $arguments += '--check' }
     $resultText = & $python.Source @arguments
     if ($LASTEXITCODE -ne 0) { throw ($resultText | ConvertFrom-Json).error }
     $resultText | ConvertFrom-Json
@@ -440,6 +441,10 @@ function Switch-ClaudeProfile {
             }
         }
     }
+    # Catch known history conflicts and remote turns before closing any app.
+    # The Python transaction repeats these checks once local writers are stopped.
+    try { $null = Invoke-SessionHandoffHelper -Helper $helper -Root $rootPath -Name $Name -Check }
+    catch { throw "History preflight failed; no windows were stopped. $($_.Exception.Message)" }
     # Both desktop instances are stopped before any metadata or transcript writes.
     # Logins and account settings are retained; the helper copies only Code history.
     if ($main.Count) {
@@ -1086,6 +1091,99 @@ function New-ClaudeProfile {
     Get-ClaudeProfile -Name $Name -Root $layout.Root
 }
 
+function Start-ClaudeAllAccounts {
+    <#
+    .SYNOPSIS
+    Opens the primary account and configured profiles, skipping running accounts.
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification = 'Names the operation on all accounts, matching launch-all in both companion tools.')]
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Root = (Get-DefaultProfileRoot))
+    $rootPath = Resolve-ProfileRoot $Root
+    $profiles = @(Get-ClaudeProfile -Root $rootPath)
+    if (@($profiles | Where-Object Name -EQ 'main').Count) {
+        throw "A managed profile named 'main' conflicts with the primary account. Rename it before launching all accounts."
+    }
+    $failures = @()
+    foreach ($name in @('main') + @($profiles | Sort-Object Name | ForEach-Object { $_.Name })) {
+        $running = @(Get-ClaudeMainProcess)
+        if ($name -eq 'main') {
+            $primaryData = Join-Path $env:APPDATA 'Claude'
+            $open = @($running | Where-Object {
+                $match = [regex]::Match($_.CommandLine, '--user-data-dir=(?:"(?<path>[^"]+)"|(?<path>\S+))')
+                -not $match.Success -or $match.Groups['path'].Value.TrimEnd('\') -eq $primaryData
+            }).Count -gt 0
+        } else {
+            $layout = Get-ProfileLayout -Name $name -Root $rootPath
+            $open = @(Get-ProfileProcess -Layout $layout -Process $running).Count -gt 0
+        }
+        if ($open) {
+            [pscustomobject]@{ Name = $name; Status = 'AlreadyRunning' }
+        } elseif ($PSCmdlet.ShouldProcess("Claude account '$name'", 'Open without history transfer')) {
+            try { Start-ClaudeProfile -Name $name -Root $rootPath -Confirm:$false }
+            catch { $failures += "${name}: $($_.Exception.Message)" }
+        }
+    }
+    if ($failures.Count) { throw ('Some Claude accounts could not be opened: ' + ($failures -join '; ')) }
+}
+
+function New-ClaudeAllAccountsShortcut {
+    <#
+    .SYNOPSIS
+    Creates Desktop and Start menu shortcuts that open only missing accounts.
+    #>
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Root = (Get-DefaultProfileRoot))
+    $rootPath = Resolve-ProfileRoot $Root
+    if (-not $PSCmdlet.ShouldProcess($rootPath, 'Create Claude (All Accounts) shortcuts')) { return }
+    $app = Get-ClaudePackage
+    $cli = Join-Path (Split-Path $PSScriptRoot -Parent) 'claude-profile.ps1'
+    $null = New-Item -ItemType Directory -Path $rootPath -Force
+    $shell = New-Object -ComObject WScript.Shell
+    $paths = @()
+    try {
+        foreach ($folder in @(Get-ShortcutFolder -Desktop -StartMenu)) {
+            $path = Join-Path $folder 'Claude (All Accounts).lnk'
+            $link = $shell.CreateShortcut($path)
+            $link.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $link.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" launch-all -Root "{1}" -Gui' -f $cli, $rootPath
+            $link.WorkingDirectory = $rootPath
+            $link.IconLocation = $app.Exe + ',0'
+            $link.WindowStyle = 7
+            $link.Description = 'Open all Claude accounts; leave running accounts untouched'
+            $link.Save()
+            $paths += $path
+        }
+    } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+    ConvertTo-Json -InputObject $paths | Set-Content -LiteralPath (Join-Path $rootPath 'all-accounts-shortcuts.json') -Encoding UTF8
+    $paths
+}
+
+function Remove-AllAccountsShortcut {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; uninstaller checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    $rootPath = Resolve-ProfileRoot $Root
+    $manifest = Join-Path $rootPath 'all-accounts-shortcuts.json'
+    if (-not (Test-Path -LiteralPath $manifest)) { return }
+    $cli = Join-Path (Split-Path $PSScriptRoot -Parent) 'claude-profile.ps1'
+    $expected = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" launch-all -Root "{1}" -Gui' -f $cli, $rootPath
+    $allowed = @(Get-ShortcutFolder -Desktop -StartMenu) | ForEach-Object { Join-Path $_ 'Claude (All Accounts).lnk' }
+    $shell = New-Object -ComObject WScript.Shell
+    try {
+        foreach ($path in @(Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json)) {
+            if ($path -in $allowed -and (Test-Path -LiteralPath $path)) {
+                $link = $shell.CreateShortcut($path)
+                if ($link.Arguments -eq $expected -and $link.TargetPath -eq (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe')) {
+                    Remove-Item -LiteralPath $path -Force
+                }
+            }
+        }
+    } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+    Remove-Item -LiteralPath $manifest -Force
+}
+
+
 function Start-ClaudeProfile {
     <#
     .SYNOPSIS
@@ -1295,4 +1393,4 @@ function Test-ClaudeProfileSupport {
 
 #endregion
 
-Export-ModuleMember -Function New-ClaudeProfile, Start-ClaudeProfile, Stop-ClaudeProfile, Get-ClaudeProfile, Remove-ClaudeProfile, Test-ClaudeProfileSupport, Enable-ClaudeProfileSignIn, Disable-ClaudeProfileSignIn, Switch-ClaudeProfile, Set-ClaudeProfileTaskbar
+Export-ModuleMember -Function Start-ClaudeAllAccounts, New-ClaudeAllAccountsShortcut, New-ClaudeProfile, Start-ClaudeProfile, Stop-ClaudeProfile, Get-ClaudeProfile, Remove-ClaudeProfile, Test-ClaudeProfileSupport, Enable-ClaudeProfileSignIn, Disable-ClaudeProfileSignIn, Switch-ClaudeProfile, Set-ClaudeProfileTaskbar

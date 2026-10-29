@@ -40,6 +40,7 @@ if ($PSCmdlet.ShouldProcess($destinationPath, $action)) {
     if (-not $historyRoot) { $historyRoot = Join-Path $env:USERPROFILE 'tandem-claude-desktop' }
     & $installedModule { param($R) Stop-ProfileTaskbarHelper -Root $R } $historyRoot
     & $installedModule { param($R) Remove-HandoffShortcut -Root $R } $historyRoot
+    & $installedModule { param($R) Remove-AllAccountsShortcut -Root $R } $historyRoot
     foreach ($p in $profiles) {
         Remove-ClaudeProfile -Name $p.Name -KeepData:(-not $RemoveProfiles) -Confirm:$false @common
     }

@@ -352,6 +352,24 @@ def summary(plan):
             "sshWorkerStateVerified": False if any(r.get("sshConfig") for r in plan["records"].values()) else None}
 
 
+def validate_plan(plan, verify_remote=True):
+    """Read-only checks, shared by preflight and the locked publish transaction."""
+    if not plan["records"]:
+        raise HandoffError("No complete session history is available for handoff.")
+    if verify_remote:
+        check_remote_writers({sid: r for sid, r in plan["raw_records"].items() if sid in plan["records"]})
+    for rel in plan["transcripts"]:
+        validate_transcript(plan["projects"][rel])
+    expected = plan["state"].get("published", {}).get(plan["target"].name, {})
+    for rel, old_hash in expected.items():
+        path = plan["target"].code / "projects" / rel
+        if path.exists() and digest(path) != old_hash:
+            incoming = plan["projects"].get(rel)
+            if incoming is None or digest(path) != digest(incoming):
+                raise HandoffError("Destination history changed while inactive; no copy was overwritten. "
+                                   "Keep both copies as separate forks or choose which history to continue before switching.")
+
+
 def execute(root, profiles, target, verify_remote=True):
     root = safe_path(root)
     root.mkdir(parents=True, exist_ok=True)
@@ -364,20 +382,7 @@ def execute(root, profiles, target, verify_remote=True):
     tx = Transaction(root, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S-") + uuid.uuid4().hex[:8])
     try:
         plan = prepare(root, profiles, target)
-        if not plan["records"]:
-            raise HandoffError("No complete session history is available for handoff.")
-        if verify_remote:
-            check_remote_writers({sid: r for sid, r in plan["raw_records"].items() if sid in plan["records"]})
-        for rel in plan["transcripts"]:
-            validate_transcript(plan["projects"][rel])
-        # The destination must not have developed a separate branch while inactive.
-        expected = plan["state"].get("published", {}).get(target, {})
-        for rel, old_hash in expected.items():
-            path = plan["target"].code / "projects" / rel
-            if path.exists() and digest(path) != old_hash:
-                incoming = plan["projects"].get(rel)
-                if incoming is None or digest(path) != digest(incoming):
-                    raise HandoffError("Destination history changed while inactive; no copy was overwritten.")
+        validate_plan(plan, verify_remote=verify_remote)
         store = root / "session-store"
         published = {}
         for rel, source in plan["projects"].items():
@@ -411,6 +416,7 @@ def main():
     inspection = parser.add_mutually_exclusive_group()
     inspection.add_argument("--preview", action="store_true")
     inspection.add_argument("--pending", action="store_true")
+    inspection.add_argument("--check", action="store_true")
     args = parser.parse_args()
     try:
         root = safe_path(args.root)
@@ -419,6 +425,10 @@ def main():
             result = {"newSessions": pending_new_sessions(root, profiles)}
         elif args.preview:
             result = summary(prepare(root, profiles, args.target))
+        elif args.check:
+            plan = prepare(root, profiles, args.target)
+            validate_plan(plan)
+            result = summary(plan)
         else:
             # This script is also safe to invoke directly: never publish into a
             # live app or share a transcript with a separate CLI writer.

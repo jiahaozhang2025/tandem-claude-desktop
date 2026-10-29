@@ -14,7 +14,8 @@
 param(
     [string]$Destination = (Join-Path -Path $env:LOCALAPPDATA -ChildPath 'Programs\tandem-claude-desktop'),
     [ValidateSet('Grouped', 'Separate')][string]$TaskbarMode,
-    [string]$Root
+    [string]$Root,
+    [switch]$NoAllAccountsShortcut
 )
 
 $ErrorActionPreference = 'Stop'
@@ -43,6 +44,12 @@ if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
     # Import-Module fail under a RemoteSigned execution policy.
     Get-ChildItem -LiteralPath $destinationPath -Recurse -File | Unblock-File
 
+    if (-not $NoAllAccountsShortcut) {
+        Import-Module (Join-Path $moduleTarget 'tandem-claude-desktop.psd1') -Force
+        $shortcutOptions = @{}
+        if ($Root) { $shortcutOptions.Root = $Root }
+        $null = New-ClaudeAllAccountsShortcut @shortcutOptions
+    }
     $cli = Join-Path -Path $destinationPath -ChildPath 'claude-profile.cmd'
     Write-Output "Installed to $destinationPath"
     Write-Output ''

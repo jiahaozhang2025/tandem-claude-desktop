@@ -452,6 +452,15 @@ Describe 'Sequential handoff launcher guards' {
         Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
         Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 0 -ParameterFilter { -not $Preview }
     }
+    It 'rejects conflicting histories before stopping any windows' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
+            [pscustomobject]@{ CommandLine = 'Claude.exe'; ProcessId = 10 }
+        }
+        Mock -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper { throw 'Destination history changed while inactive' } -ParameterFilter { $Check }
+        { Switch-ClaudeProfile work -Root $switchRoot } | Should -Throw '*no windows were stopped*Destination history*'
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
+        Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 0 -ParameterFilter { -not $Preview -and -not $Check }
+    }
     It 'activates the current profile when no new sessions are waiting elsewhere' {
         '{"owner":"work"}' | Set-Content -LiteralPath (Join-Path $switchRoot 'handoff-state.json')
         Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
@@ -475,5 +484,98 @@ Describe 'Sequential handoff launcher guards' {
         Should -Invoke -ModuleName tandem-claude-desktop Invoke-SessionHandoffHelper -Times 1 -Exactly -ParameterFilter { $Preview }
         Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0
         Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
+    }
+}
+
+Describe 'Launch all accounts' {
+    BeforeEach {
+        $allRoot = Join-Path $TestDrive 'all profiles'
+        $null = New-Item -ItemType Directory -Path $allRoot -Force
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeProfile { [pscustomobject]@{ Name = 'account2' } }
+        Mock -ModuleName tandem-claude-desktop Get-ProfileLayout { [pscustomobject]@{ Name = $Name; UserData = (Join-Path $Root "$Name\electron"); UserDataArg = ('--user-data-dir="' + (Join-Path $Root "$Name\electron") + '"') } }
+        Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { [pscustomobject]@{ Name = $Name; Status = 'Started' } }
+    }
+    It 'opens only missing accounts: <Scenario>' -ForEach @(
+        @{ Scenario = 'neither open'; MainOpen = $false; ProfileOpen = $false; Starts = 2 }
+        @{ Scenario = 'main open'; MainOpen = $true; ProfileOpen = $false; Starts = 1 }
+        @{ Scenario = 'profile open'; MainOpen = $false; ProfileOpen = $true; Starts = 1 }
+        @{ Scenario = 'both open'; MainOpen = $true; ProfileOpen = $true; Starts = 0 }
+    ) {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
+            if ($MainOpen) { [pscustomobject]@{ CommandLine = 'Claude.exe'; ProcessId = 10 } }
+            if ($ProfileOpen) { [pscustomobject]@{ CommandLine = ('Claude.exe --user-data-dir="' + (Join-Path $allRoot 'account2\electron') + '"'); ProcessId = 20 } }
+        }
+        $result = @(Start-ClaudeAllAccounts -Root $allRoot)
+        $result.Count | Should -Be 2
+        @($result | Where-Object Status -EQ AlreadyRunning).Count | Should -Be (2 - $Starts)
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times $Starts -Exactly
+        if ($MainOpen) { Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0 -ParameterFilter { $Name -eq 'main' } }
+        if ($ProfileOpen) { Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0 -ParameterFilter { $Name -eq 'account2' } }
+    }
+    It 'recognizes an explicitly selected native data folder without relaunching it' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess { [pscustomobject]@{ CommandLine = ('Claude.exe --user-data-dir="' + (Join-Path $env:APPDATA 'Claude') + '"'); ProcessId = 10 } }
+        $null = Start-ClaudeAllAccounts -Root $allRoot
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 1 -Exactly -ParameterFilter { $Name -eq 'account2' -and $Root -eq $allRoot }
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0 -ParameterFilter { $Name -eq 'main' }
+    }
+    It 'does not mistake an unmanaged profile for the primary account' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess { [pscustomobject]@{ CommandLine = 'Claude.exe --user-data-dir="C:\unmanaged\electron"'; ProcessId = 30 } }
+        $null = Start-ClaudeAllAccounts -Root $allRoot
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 2 -Exactly
+    }
+    It 'tries the other accounts if one fails and reports the error' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess { }
+        Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { if ($Name -eq 'main') { throw 'synthetic launch failure' } }
+        { Start-ClaudeAllAccounts -Root $allRoot } | Should -Throw '*main: synthetic launch failure*'
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 1 -Exactly -ParameterFilter { $Name -eq 'account2' }
+    }
+    It 'supports WhatIf without launching any accounts' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess { }
+        Start-ClaudeAllAccounts -Root $allRoot -WhatIf
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0
+    }
+    It 'rejects a conflicting managed main profile before launching anything' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeProfile { [pscustomobject]@{ Name = 'main' } }
+        { Start-ClaudeAllAccounts -Root $allRoot } | Should -Throw '*conflicts*'
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0
+    }
+}
+
+Describe 'All Accounts shortcuts' {
+    BeforeEach {
+        $shortcutRoot = Join-Path $TestDrive ('shortcuts root-' + [guid]::NewGuid())
+        $shortcutFolder = Join-Path $TestDrive ('desktop-' + [guid]::NewGuid())
+        $null = New-Item -ItemType Directory -Path $shortcutFolder -Force
+        Mock -ModuleName tandem-claude-desktop Get-ShortcutFolder { $shortcutFolder }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudePackage { [pscustomobject]@{ Exe = 'C:\Vendor\Claude.exe' } }
+    }
+    It 'creates a launch-all shortcut and removes only its own links' {
+        $paths = @(New-ClaudeAllAccountsShortcut -Root $shortcutRoot)
+        $paths.Count | Should -Be 1
+        $shell = New-Object -ComObject WScript.Shell
+        try {
+            $link = $shell.CreateShortcut($paths[0])
+            $link.Arguments | Should -BeLike '*launch-all -Root*shortcuts root* -Gui'
+            $link.Arguments | Should -Not -BeLike '* switch *'
+            $link.WindowStyle | Should -Be 7
+        } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        & (Get-Module tandem-claude-desktop) { param($R) Remove-AllAccountsShortcut -Root $R } $shortcutRoot
+        $paths[0] | Should -Not -Exist
+    }
+    It 'does not remove a link subsequently assigned to another profile root' {
+        $path = @(New-ClaudeAllAccountsShortcut -Root $shortcutRoot)[0]
+        $shell = New-Object -ComObject WScript.Shell
+        try {
+            $link = $shell.CreateShortcut($path)
+            $link.Arguments = 'launch-all -Root "C:\another-root"'
+            $link.Save()
+        } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        & (Get-Module tandem-claude-desktop) { param($R) Remove-AllAccountsShortcut -Root $R } $shortcutRoot
+        $path | Should -Exist
+    }
+    It 'does not create any shortcut or root with WhatIf' {
+        New-ClaudeAllAccountsShortcut -Root $shortcutRoot -WhatIf
+        $shortcutRoot | Should -Not -Exist
+        @(Get-ChildItem -LiteralPath $shortcutFolder).Count | Should -Be 0
     }
 }

@@ -1,6 +1,6 @@
 ﻿@{
     RootModule           = 'tandem-claude-desktop.psm1'
-    ModuleVersion        = '0.3.1'
+    ModuleVersion        = '0.3.2'
     GUID                 = 'bf128dc9-e536-46be-942d-b2ceba829cba'
     Author               = 'Jiahao Zhang'
     Copyright            = '(c) 2026 Jiahao Zhang. MIT License.'
@@ -8,6 +8,8 @@
     PowerShellVersion    = '5.1'
     CompatiblePSEditions = @('Desktop', 'Core')
     FunctionsToExport    = @(
+        'Start-ClaudeAllAccounts'
+        'New-ClaudeAllAccountsShortcut'
         'New-ClaudeProfile'
         'Start-ClaudeProfile'
         'Stop-ClaudeProfile'
