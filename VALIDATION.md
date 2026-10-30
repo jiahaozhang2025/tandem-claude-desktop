@@ -1,5 +1,12 @@
 # Validation
 
+## Recurring launch and icon fixes, October 29, 2026
+
+* 80 Pester tests pass on PowerShell 7. Regression tests simulate a running hidden account, visibility timeout without process termination, and removal of a vendor package after shortcut creation. Older colored icon resources are retained for pins.
+* Before remediation, Main and All Accounts shortcut icon paths referenced removed Store versions. ChatGPT Account 2 had a live parent process and valid profile writes but zero visible taskbar windows. The old All Accounts command reported AlreadyRunning and did nothing; the normal account launch revealed its existing window with the same parent PID. This reproduced the cause without restarting either account.
+* The visibility check excludes tool windows such as floating overlays. Startup file writes alone are no longer treated as proof of a usable ChatGPT window.
+
+
 ## October 29, 2026
 
 * 76 Pester tests passed on Windows PowerShell 5.1 and PowerShell 7; 26 Python handoff tests passed. PSScriptAnalyzer found no warnings or errors in the production scripts.

@@ -29,6 +29,7 @@ namespace Tandem.Claude {
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumCallback callback, IntPtr data);
         [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
         [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr window);
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] static extern int GetWindowStyle(IntPtr window, int index);
         [DllImport("user32.dll")] static extern bool IsWindow(IntPtr window);
         [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr window, uint relation);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int length);
@@ -75,7 +76,7 @@ namespace Tandem.Claude {
             EnumWindows(delegate(IntPtr window, IntPtr ignored) {
                 uint owner; GetWindowThreadProcessId(window, out owner);
                 var name = new StringBuilder(128); GetClassName(window, name, name.Capacity);
-                if (owner == process && IsWindowVisible(window) && GetWindow(window, 4) == IntPtr.Zero && name.ToString().StartsWith("Chrome_WidgetWin_")) result.Add(window);
+                if (owner == process && IsWindowVisible(window) && (GetWindowStyle(window, -20) & 0x80) == 0 && GetWindow(window, 4) == IntPtr.Zero && name.ToString().StartsWith("Chrome_WidgetWin_")) result.Add(window);
                 return true;
             }, IntPtr.Zero);
             return result.ToArray();

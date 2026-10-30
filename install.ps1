@@ -28,8 +28,15 @@ if ($destinationPath -eq [IO.Path]::GetFullPath($source).TrimEnd('\')) {
 
 if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
     $moduleTarget = Join-Path -Path $destinationPath -ChildPath 'tandem-claude-desktop'
+    # Replace a resident shell helper too, without restarting the account apps.
+    $oldManifest = Join-Path $moduleTarget 'tandem-claude-desktop.psd1'
+    if (-not $NoAllAccountsShortcut -and (Test-Path -LiteralPath $oldManifest)) {
+        $oldModule = Import-Module $oldManifest -Force -PassThru
+        & $oldModule { param($R) if (-not $R) { $R = Get-DefaultProfileRoot }; Stop-ProfileTaskbarHelper -Root $R } $Root
+        Remove-Module -ModuleInfo $oldModule -Force
+    }
     $null = New-Item -ItemType Directory -Force -Path $moduleTarget
-    foreach ($file in 'claude-profile.ps1', 'profile-auth.ps1', 'session-handoff.py', 'taskbar-helper.ps1', 'taskbar-identity.cs', 'uninstall.ps1', 'README.md', 'CHANGELOG.md', 'VALIDATION.md', 'LICENSE') {
+    foreach ($file in 'claude-profile.ps1', 'profile-auth.ps1', 'session-handoff.py', 'taskbar-helper.ps1', 'taskbar-identity.cs', 'uninstall.ps1', 'README.md', 'CHANGELOG.md', 'VALIDATION.md', 'TROUBLESHOOTING.md', 'LICENSE') {
         Copy-Item -LiteralPath (Join-Path -Path $source -ChildPath $file) -Destination $destinationPath -Force
     }
     foreach ($file in 'tandem-claude-desktop.psd1', 'tandem-claude-desktop.psm1') {
@@ -49,6 +56,12 @@ if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
         $shortcutOptions = @{}
         if ($Root) { $shortcutOptions.Root = $Root }
         $null = New-ClaudeAllAccountsShortcut @shortcutOptions
+        & (Get-Module tandem-claude-desktop) {
+            param($R)
+            if (-not $R) { $R = Get-DefaultProfileRoot }
+            Save-MainSwitchShortcut -Root (Resolve-ProfileRoot $R) -App (Get-ClaudePackage)
+            Start-ProfileTaskbarHelper -Root (Resolve-ProfileRoot $R)
+        } $Root
     }
     $cli = Join-Path -Path $destinationPath -ChildPath 'claude-profile.cmd'
     Write-Output "Installed to $destinationPath"

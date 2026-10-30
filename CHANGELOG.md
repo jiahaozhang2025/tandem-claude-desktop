@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 - 2026-10-29
+
+* Fix All Accounts skipping a hidden background account: check visible taskbar windows, reactivate hidden accounts through their normal launch command, and verify a window appears.
+* Use persistent local icons for Main and All Accounts shortcuts instead of versioned Store executable paths. Retain older icon resources for pinned shortcuts and track the current profile icon explicitly.
+* Refresh Main shortcuts and restart only the shell helper during installer upgrades, preserving running apps and taskbar preferences. All Accounts also starts a missing taskbar helper.
+* Add per-account state/action/process-ID diagnostics in launcher-events.log and tests for hidden accounts and removed package folders.
+
 ## 0.3.2 — 2026-10-29
 
 * Add `claude-profile launch-all` and Desktop/Start menu **Claude (All Accounts)** shortcuts, installed by default. Open only missing accounts; skip running accounts without activating or restarting them.

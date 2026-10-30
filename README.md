@@ -8,7 +8,9 @@ This Claude version also includes browser sign-in routing and optional sequentia
 
 ## Open all accounts
 
-After installing or upgrading, use **Claude (All Accounts)** on your desktop or Start menu. It opens your primary account and every configured profile. Already running accounts are skipped without activating or restarting them. You can also run:
+For recurring startup or missing-icon problems, see [the diagnosis and troubleshooting notes](TROUBLESHOOTING.md).
+
+After installing or upgrading, use **Claude (All Accounts)** on your desktop or Start menu. It opens your primary account and every configured profile. Accounts with a visible window are skipped without activating or restarting them. An account running only in the background is reactivated and checked for a visible window, without restarting it. You can also run:
 
 ```powershell
 & "$env:LOCALAPPDATA\Programs\tandem-claude-desktop\claude-profile.cmd" launch-all
@@ -34,7 +36,7 @@ Open **Claude (Account 2)** on the desktop or Start menu for ordinary use. For f
 | Command | Behavior |
 | --- | --- |
 | `new <name> [-Label <text>] [-Color <color>]` | Create or refresh profile shortcuts, retaining profile data |
-| `launch-all` | Open every configured account, skipping those already running |
+| `launch-all` | Open every configured account, skipping visible windows and reactivating hidden accounts |
 | `launch <name>` | Launch the profile, or activate its running instance |
 | `signin <name>` | Temporarily route the next browser login callback to this running profile |
 | `cancel-signin` | Restore normal Claude link handling immediately |

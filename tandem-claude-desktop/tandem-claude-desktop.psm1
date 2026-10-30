@@ -63,7 +63,10 @@ function Get-TaskbarProfile {
         if (-not (Test-Path -LiteralPath $metaPath)) { continue }
         $layout = Get-ProfileLayout $folder.Name $Root
         $meta = Read-ProfileMeta $layout
-        $icon = Get-ChildItem -LiteralPath $layout.Dir -Filter 'icon-*.ico' -File | Select-Object -First 1
+        $icon = $null
+        $savedIcon = Get-MetaValue -Meta $meta -Key 'icon' -Default ''
+        if ($savedIcon -and (Test-Path -LiteralPath $savedIcon)) { $icon = Get-Item -LiteralPath $savedIcon }
+        if ($null -eq $icon) { $icon = Get-ChildItem -LiteralPath $layout.Dir -Filter 'icon-*.ico' -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1 }
         if ($null -eq $icon) { continue }
         [pscustomobject]@{ Name = $layout.Name; Label = ('Claude (' + $meta.label + ')'); UserData = $layout.UserData;
             Icon = $icon.FullName; AppId = (Get-TaskbarAppId $Root $layout.Name); Command = (Get-TaskbarLaunchCommand $Root $layout.Name) }
@@ -465,11 +468,12 @@ function Switch-ClaudeProfile {
 
 function Save-MainSwitchShortcut {
     param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)]$App)
+    $icon = Get-LauncherIcon -Root $Root -App $App -Name main
     $cli = Join-Path (Split-Path $PSScriptRoot -Parent) 'claude-profile.ps1'
     $shell = New-Object -ComObject WScript.Shell
     $paths = @()
     try {
-        foreach ($folder in @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs'))) {
+        foreach ($folder in @(Get-ShortcutFolder -Desktop -StartMenu)) {
             $path = Join-Path $folder 'Claude (Main).lnk'
             $link = $shell.CreateShortcut($path)
             $link.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
@@ -477,7 +481,7 @@ function Save-MainSwitchShortcut {
             if (Test-Path -LiteralPath (Join-Path $Root 'handoff-state.json')) { $command = 'switch' }
             $link.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" {1} main -Root "{2}" -Gui' -f $cli, $command, $Root
             $link.WorkingDirectory = $Root
-            $link.IconLocation = $App.Exe + ',0'
+            $link.IconLocation = $icon + ',0'
             $link.WindowStyle = 7
             $link.Description = 'Switch to the primary Claude account with saved coding history'
             $link.Save()
@@ -1074,9 +1078,7 @@ function New-ClaudeProfile {
             Write-ShortcutIcon -Path $link -Icon $icon
         }
     }
-    Get-ChildItem -LiteralPath $layout.Dir -Filter 'icon*.ico' -File |
-        Where-Object { $_.Name -match '^icon(-[0-9a-f]+)?\.ico$' -and $_.FullName -ne $icon } |
-        Remove-Item -Force
+    # Retain old icon resources for existing Windows taskbar pins.
     # Remember every shortcut ever made for this profile so Remove can clean them all up.
     $shortcuts = @($known + $created | Sort-Object -Unique)
     Save-ProfileMeta -Layout $layout -Meta ([ordered]@{
@@ -1084,6 +1086,7 @@ function New-ClaudeProfile {
             label     = $Label
             color     = $Color
             created   = Get-MetaValue -Meta $meta -Key 'created' -Default ((Get-Date).ToString('o'))
+            icon      = $icon
             shortcuts = $shortcuts
         })
     Write-ProfileLog -Layout $layout -Message "profile created or updated (label '$Label')"
@@ -1091,14 +1094,58 @@ function New-ClaudeProfile {
     Get-ClaudeProfile -Name $Name -Root $layout.Root
 }
 
+
+function Get-AccountProcess {
+    param([string]$Name, [string]$Root)
+    $running = @(Get-ClaudeMainProcess)
+    if ($Name -ne 'main') { return Get-ProfileProcess -Layout (Get-ProfileLayout $Name $Root) -Process $running }
+    $primaryData = Join-Path $env:APPDATA 'Claude'
+    $running | Where-Object {
+        $match = [regex]::Match($_.CommandLine, '--user-data-dir=(?:"(?<path>[^"]+)"|(?<path>\S+))')
+        -not $match.Success -or $match.Groups['path'].Value.TrimEnd('\') -eq $primaryData
+    }
+}
+
+function Test-DesktopWindow {
+    param([AllowEmptyCollection()][object[]]$Process = @())
+    Initialize-TaskbarApi
+    foreach ($item in $Process) {
+        if (@([Tandem.Claude.TaskbarIdentity]::WindowsForProcess([uint32]$item.ProcessId)).Count) { return $true }
+    }
+    $false
+}
+
+function Write-LauncherEvent {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private diagnostic logging; caller checks WhatIf.')]
+    [CmdletBinding()]
+    param([string]$Root, [string]$Name, [string]$State, [string]$Action, [object[]]$Process = @())
+    if (-not (Test-Path -LiteralPath $Root)) { return }
+    try { [ordered]@{ time = [datetime]::UtcNow.ToString('o'); account = $Name; state = $State; action = $Action;
+        processIds = @($Process | ForEach-Object { [int]$_.ProcessId }) } | ConvertTo-Json -Compress |
+        Add-Content -LiteralPath (Join-Path $Root 'launcher-events.log') -Encoding UTF8 -ErrorAction Stop }
+    catch { Write-Warning 'Could not append the launcher diagnostic log.' }
+}
+
+function Get-LauncherIcon {
+    param([string]$Root, [Parameter(Mandatory)]$App, [ValidateSet('main', 'all')][string]$Name)
+    $directory = Join-Path $Root ($Name + '-launcher')
+    Assert-NoLinkedAncestor $directory
+    $null = New-Item -ItemType Directory -Path $directory -Force
+    $color = $script:Palette.Orange
+    if ($Name -eq 'all') { $color = $script:Palette.Gray }
+    # Keep icon resources outside the versioned Store package. Never remove old
+    # hashes: Windows may retain a pinned copy of a shortcut referring to them.
+    Save-ProfileIcon -App $App -Layout ([pscustomobject]@{ Dir = $directory }) -ColorHex $color
+}
+
 function Start-ClaudeAllAccounts {
     <#
     .SYNOPSIS
-    Opens the primary account and configured profiles, skipping running accounts.
+    Opens missing account windows and reactivates hidden background accounts.
     #>
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification = 'Names the operation on all accounts, matching launch-all in both companion tools.')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseSingularNouns', '', Justification = 'Matches the launch-all command in both companion tools.')]
     [CmdletBinding(SupportsShouldProcess)]
-    param([string]$Root = (Get-DefaultProfileRoot))
+    param([string]$Root = (Get-DefaultProfileRoot), [ValidateRange(1, 600)][int]$VerifySeconds = 45)
     $rootPath = Resolve-ProfileRoot $Root
     $profiles = @(Get-ClaudeProfile -Root $rootPath)
     if (@($profiles | Where-Object Name -EQ 'main').Count) {
@@ -1106,24 +1153,31 @@ function Start-ClaudeAllAccounts {
     }
     $failures = @()
     foreach ($name in @('main') + @($profiles | Sort-Object Name | ForEach-Object { $_.Name })) {
-        $running = @(Get-ClaudeMainProcess)
-        if ($name -eq 'main') {
-            $primaryData = Join-Path $env:APPDATA 'Claude'
-            $open = @($running | Where-Object {
-                $match = [regex]::Match($_.CommandLine, '--user-data-dir=(?:"(?<path>[^"]+)"|(?<path>\S+))')
-                -not $match.Success -or $match.Groups['path'].Value.TrimEnd('\') -eq $primaryData
-            }).Count -gt 0
-        } else {
-            $layout = Get-ProfileLayout -Name $name -Root $rootPath
-            $open = @(Get-ProfileProcess -Layout $layout -Process $running).Count -gt 0
-        }
-        if ($open) {
+        $processes = @(Get-AccountProcess -Name $name -Root $rootPath)
+        $visible = $processes.Count -gt 0 -and (Test-DesktopWindow -Process $processes)
+        $state = 'Stopped'
+        if ($processes.Count) { $state = 'Hidden' }
+        if ($visible) {
+            if (-not $WhatIfPreference) { Write-LauncherEvent $rootPath $name Visible Skip $processes }
             [pscustomobject]@{ Name = $name; Status = 'AlreadyRunning' }
-        } elseif ($PSCmdlet.ShouldProcess("Claude account '$name'", 'Open without history transfer')) {
-            try { Start-ClaudeProfile -Name $name -Root $rootPath -Confirm:$false }
-            catch { $failures += "${name}: $($_.Exception.Message)" }
+        } elseif ($PSCmdlet.ShouldProcess("Claude account '$name' ($state)", 'Open without history transfer')) {
+            try {
+                Write-LauncherEvent $rootPath $name $state Activate $processes
+                $result = Start-ClaudeProfile -Name $name -Root $rootPath -VerifySeconds $VerifySeconds -Confirm:$false
+                $deadline = (Get-Date).AddSeconds($VerifySeconds)
+                while (-not (Test-DesktopWindow -Process @(Get-AccountProcess -Name $name -Root $rootPath))) {
+                    if ((Get-Date) -gt $deadline) { throw "The process is running but no visible window appeared within $VerifySeconds seconds. No accounts were stopped. See launcher-events.log." }
+                    Start-Sleep -Milliseconds 500
+                }
+                Write-LauncherEvent $rootPath $name Visible Ready @(Get-AccountProcess -Name $name -Root $rootPath)
+                $result
+            } catch {
+                Write-LauncherEvent $rootPath $name $state Failed @(Get-AccountProcess -Name $name -Root $rootPath)
+                $failures += "${name}: $($_.Exception.Message)"
+            }
         }
     }
+    if (-not $WhatIfPreference) { Start-ProfileTaskbarHelper -Root $rootPath }
     if ($failures.Count) { throw ('Some Claude accounts could not be opened: ' + ($failures -join '; ')) }
 }
 
@@ -1137,6 +1191,7 @@ function New-ClaudeAllAccountsShortcut {
     $rootPath = Resolve-ProfileRoot $Root
     if (-not $PSCmdlet.ShouldProcess($rootPath, 'Create Claude (All Accounts) shortcuts')) { return }
     $app = Get-ClaudePackage
+    $icon = Get-LauncherIcon -Root $rootPath -App $app -Name all
     $cli = Join-Path (Split-Path $PSScriptRoot -Parent) 'claude-profile.ps1'
     $null = New-Item -ItemType Directory -Path $rootPath -Force
     $shell = New-Object -ComObject WScript.Shell
@@ -1148,7 +1203,7 @@ function New-ClaudeAllAccountsShortcut {
             $link.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
             $link.Arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" launch-all -Root "{1}" -Gui' -f $cli, $rootPath
             $link.WorkingDirectory = $rootPath
-            $link.IconLocation = $app.Exe + ',0'
+            $link.IconLocation = $icon + ',0'
             $link.WindowStyle = 7
             $link.Description = 'Open all Claude accounts; leave running accounts untouched'
             $link.Save()

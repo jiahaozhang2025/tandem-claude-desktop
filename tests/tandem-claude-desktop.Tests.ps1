@@ -489,11 +489,35 @@ Describe 'Sequential handoff launcher guards' {
 
 Describe 'Launch all accounts' {
     BeforeEach {
+        Mock -ModuleName tandem-claude-desktop Test-DesktopWindow { $true }
+        Mock -ModuleName tandem-claude-desktop Stop-Process { }
         $allRoot = Join-Path $TestDrive 'all profiles'
         $null = New-Item -ItemType Directory -Path $allRoot -Force
         Mock -ModuleName tandem-claude-desktop Get-ClaudeProfile { [pscustomobject]@{ Name = 'account2' } }
         Mock -ModuleName tandem-claude-desktop Get-ProfileLayout { [pscustomobject]@{ Name = $Name; UserData = (Join-Path $Root "$Name\electron"); UserDataArg = ('--user-data-dir="' + (Join-Path $Root "$Name\electron") + '"') } }
         Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { [pscustomobject]@{ Name = $Name; Status = 'Started' } }
+    }
+
+    It 'reactivates a running hidden account instead of skipping it' {
+        $script:accountVisible = $false
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess {
+            [pscustomobject]@{ CommandLine = 'Claude.exe'; ProcessId = 10 }
+            [pscustomobject]@{ CommandLine = ('Claude.exe --user-data-dir="' + (Join-Path $allRoot 'account2\electron') + '"'); ProcessId = 20 }
+        }
+        Mock -ModuleName tandem-claude-desktop Test-DesktopWindow { $Process.Count -gt 0 -and ($Process[0].ProcessId -ne 20 -or $script:accountVisible) }
+        Mock -ModuleName tandem-claude-desktop Start-ClaudeProfile { $script:accountVisible = $true; [pscustomobject]@{ Name = $Name; Status = 'AlreadyRunning' } }
+        $null = Start-ClaudeAllAccounts -Root $allRoot -VerifySeconds 1
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 0 -ParameterFilter { $Name -eq 'main' }
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 1 -Exactly -ParameterFilter { $Name -eq 'account2' }
+        Get-Content (Join-Path $allRoot 'launcher-events.log') -Raw | Should -BeLike '*"state":"Hidden","action":"Activate"*'
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
+    }
+    It 'reports invisible processes as failures without stopping them' {
+        Mock -ModuleName tandem-claude-desktop Get-ClaudeMainProcess { }
+        Mock -ModuleName tandem-claude-desktop Test-DesktopWindow { $false }
+        { Start-ClaudeAllAccounts -Root $allRoot -VerifySeconds 1 } | Should -Throw '*no visible window*No accounts were stopped*'
+        Should -Invoke -ModuleName tandem-claude-desktop Start-ClaudeProfile -Times 2 -Exactly
+        Should -Invoke -ModuleName tandem-claude-desktop Stop-Process -Times 0
     }
     It 'opens only missing accounts: <Scenario>' -ForEach @(
         @{ Scenario = 'neither open'; MainOpen = $false; ProfileOpen = $false; Starts = 2 }
@@ -543,6 +567,7 @@ Describe 'Launch all accounts' {
 
 Describe 'All Accounts shortcuts' {
     BeforeEach {
+        Mock -ModuleName tandem-claude-desktop Get-LauncherIcon { 'C:\local\persistent.ico' }
         $shortcutRoot = Join-Path $TestDrive ('shortcuts root-' + [guid]::NewGuid())
         $shortcutFolder = Join-Path $TestDrive ('desktop-' + [guid]::NewGuid())
         $null = New-Item -ItemType Directory -Path $shortcutFolder -Force
@@ -577,5 +602,43 @@ Describe 'All Accounts shortcuts' {
         New-ClaudeAllAccountsShortcut -Root $shortcutRoot -WhatIf
         $shortcutRoot | Should -Not -Exist
         @(Get-ChildItem -LiteralPath $shortcutFolder).Count | Should -Be 0
+    }
+}
+
+
+Describe 'Update safe launcher icons' {
+    BeforeEach {
+        $iconRoot = Join-Path $TestDrive ('icon-root-' + [guid]::NewGuid())
+        $vendorRoot = Join-Path $TestDrive ('vendor-version-' + [guid]::NewGuid())
+        $linkFolder = Join-Path $TestDrive ('links-' + [guid]::NewGuid())
+        $null = New-Item -ItemType Directory -Path $vendorRoot, $linkFolder
+        Set-Content (Join-Path $vendorRoot 'Claude.exe') 'synthetic package'
+        Mock -ModuleName tandem-claude-desktop Get-ShortcutFolder { $linkFolder }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudePackage { [pscustomobject]@{ Exe = (Join-Path $vendorRoot 'Claude.exe') } }
+        Mock -ModuleName tandem-claude-desktop Save-ProfileIcon {
+            $path = Join-Path $Layout.Dir 'icon-test.ico'
+            [IO.File]::WriteAllBytes($path, [byte[]]@(0, 0, 1, 0))
+            $path
+        }
+    }
+    It 'keeps Main and All Accounts icons valid after the vendor package is removed' {
+        $null = New-ClaudeAllAccountsShortcut -Root $iconRoot
+        & (Get-Module tandem-claude-desktop) { param($R) Save-MainSwitchShortcut -Root $R -App (Get-ClaudePackage) } $iconRoot
+        Remove-Item -LiteralPath (Join-Path $vendorRoot 'Claude.exe') -Force
+        $shell = New-Object -ComObject WScript.Shell
+        try {
+            foreach ($name in @('Claude (Main).lnk', 'Claude (All Accounts).lnk')) {
+                $link = $shell.CreateShortcut((Join-Path $linkFolder $name))
+                $icon = $link.IconLocation -replace ',0$', ''
+                $icon | Should -BeLike ($iconRoot + '\*')
+                $icon | Should -Exist
+            }
+        } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+    }
+    It 'does not mistake a background process for a visible native window' {
+        InModuleScope tandem-claude-desktop {
+            Test-DesktopWindow -Process @() | Should -BeFalse
+            Test-DesktopWindow -Process @([pscustomobject]@{ ProcessId = $PID }) | Should -BeFalse
+        }
     }
 }
