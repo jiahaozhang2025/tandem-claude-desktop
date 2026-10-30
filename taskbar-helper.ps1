@@ -39,8 +39,7 @@ try {
             $managed++
             foreach ($window in [Tandem.Claude.TaskbarIdentity]::WindowsForProcess([uint32]$process.ProcessId)) {
                 try {
-                    if ([Tandem.Claude.TaskbarIdentity]::ReadWindow($window, 5) -ne $matchedProfile.AppId -or
-                        [Tandem.Claude.TaskbarIdentity]::ReadWindow($window, 3) -ne ($matchedProfile.Icon + ',0')) {
+                    if ([Tandem.Claude.TaskbarIdentity]::NeedsApply($window, $matchedProfile.AppId, $matchedProfile.Icon)) {
                         [Tandem.Claude.TaskbarIdentity]::Apply($window, $matchedProfile.AppId, $matchedProfile.Command, $matchedProfile.Label, $matchedProfile.Icon)
                     }
                 } catch {

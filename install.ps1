@@ -60,6 +60,10 @@ if ($PSCmdlet.ShouldProcess($destinationPath, 'Install claude-profile')) {
             param($R)
             if (-not $R) { $R = Get-DefaultProfileRoot }
             Save-MainSwitchShortcut -Root (Resolve-ProfileRoot $R) -App (Get-ClaudePackage)
+            # Refresh account links too when the shell identity schema changes.
+            foreach ($managedProfile in @(Get-ClaudeProfile -Root (Resolve-ProfileRoot $R))) {
+                $null = New-ClaudeProfile -Name $managedProfile.Name -Root (Resolve-ProfileRoot $R) -Label $managedProfile.Label
+            }
             Start-ProfileTaskbarHelper -Root (Resolve-ProfileRoot $R)
         } $Root
     }

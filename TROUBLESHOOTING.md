@@ -26,3 +26,11 @@ Regression tests cover hidden background accounts, a removed vendor package, vis
 Rewriting shortcut metadata alone can leave another Explorer view showing an old cached image. The launcher now sends a targeted SHCNE_UPDATEITEM notification with SHCNF_PATHW and SHCNF_FLUSH after shortcut creation or icon updates. It does not delete Windows icon databases or restart Explorer. If an icon still differs between Desktop, Start and taskbar, identify the affected surface: pinned copies and native app shortcuts can be distinct from the companion shortcuts.
 
 Native test windows now verify actual Windows visibility transitions and tool-window filtering. These regression checks exercise the causes observed here; they cannot prove that all future app or Windows releases will behave identically.
+
+## Blank running taskbar button despite a valid Desktop icon
+
+On October 30, the reported blank Claude Main icon was confirmed in an actual taskbar screenshot. Its Desktop shortcut and ICO frames were valid, but the window returned invalid live icon handles. Shell property strings survive the helper process that sets them; the helper's owned icon handles do not. The old helper checked only the strings and skipped repair when they still matched. A new helper now claims each window and verifies both its owned handles and the window's current icons. It installs icons before publishing the group identity.
+
+The old Claude Main taskbar group also retained a generic document image after its live handles were repaired. Refreshing the Desktop shortcut and re-registering the taskbar button did not fix that cached group. The stable v2 identity schema replaced it; an actual taskbar screenshot then showed orange Main and blue Account 2. Identities remain deterministic within v2. Installers update Desktop, Start menu and private account shortcuts; an independently retained old pinned shortcut may require repinning.
+
+A separate-process native test reproduces the lifetime failure: a helper assigns an icon and exits without restoring it, leaving matching property strings but invalid icon handles on the surviving test window. The replacement helper must repair the live icons and later restore native grouping without resurrecting old companion IDs. This test does not control or restart the vendor apps.

@@ -41,7 +41,7 @@ function Get-TaskbarAppId {
     $sha = [Security.Cryptography.SHA256]::Create()
     try { $hash = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($normalized))[0..5] | ForEach-Object { $_.ToString('x2') }) }
     finally { $sha.Dispose() }
-    'Tandem.Claude.' + $hash + '.' + $Name.ToLowerInvariant()
+    'Tandem.Claude.' + $hash + '.v2.' + $Name.ToLowerInvariant()
 }
 
 function Get-TaskbarLaunchCommand {

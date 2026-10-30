@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5 - 2026-10-30
+
+* Fix blank running-window taskbar icons after a helper restart. A new helper now claims each window even when old shell properties already match, validates live icon handles, and repairs icons overwritten by the app.
+* Load and set live icons before publishing the taskbar group ID; reject invalid icon files before changing metadata. Restoration does not reinstate dead handles or inherited companion IDs.
+* Move to stable v2 taskbar identities to replace stale cached group images from the old implementation. Refresh all managed account shortcuts during installation so their IDs match running windows.
+* Add separate-process regression tests that leave taskbar metadata behind after the icon-owning helper exits, including old-to-new identity restoration.
+
+
 ## 0.3.4 - 2026-10-29
 
 * Notify Windows with SHCNE_UPDATEITEM and SHCNF_FLUSH after creating or rewriting account shortcuts, including icon-only updates, so other Explorer views can refresh cached images.

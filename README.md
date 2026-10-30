@@ -119,6 +119,8 @@ The app install, browser extensions, system credentials and machine-level servic
 
 Profile paths must be ASCII, without `%`, and cannot pass through directory links. Profile removal deletes nested directory links themselves without traversing their targets.
 
+Taskbar identity schema v2 also repairs icons owned by a previous helper process. Desktop, Start menu and private account links are refreshed on installation. If you retained an old pinned shortcut independently, repin the refreshed account shortcut to use the v2 identity.
+
 ## Uninstall
 
 ```powershell

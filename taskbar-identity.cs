@@ -36,6 +36,7 @@ namespace Tandem.Claude {
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr window, StringBuilder name, int length);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr LoadImage(IntPtr instance, string path, uint type, int width, int height, uint flags);
         [DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr icon);
+        [DllImport("user32.dll")] static extern IntPtr CopyIcon(IntPtr icon);
         [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SendMessageTimeout(IntPtr window, uint message, UIntPtr argument, IntPtr value, uint flags, uint timeout, out UIntPtr result);
         static readonly uint[] Fields = { 2, 3, 4, 5 };
         sealed class Original { public string[] Values; public string Assigned; public IntPtr Small; public IntPtr Large; }
@@ -82,22 +83,56 @@ namespace Tandem.Claude {
             }, IntPtr.Zero);
             return result.ToArray();
         }
+        public static bool IsIconValid(IntPtr icon) {
+            if (icon == IntPtr.Zero) return false;
+            IntPtr copy = CopyIcon(icon);
+            if (copy == IntPtr.Zero) return false;
+            DestroyIcon(copy);
+            return true;
+        }
+        static IntPtr[] LoadIcons(string path) {
+            IntPtr[] pair;
+            if (icons.TryGetValue(path, out pair) && IsIconValid(pair[0]) && IsIconValid(pair[1])) return pair;
+            if (pair != null) foreach (IntPtr icon in pair) if (IsIconValid(icon)) DestroyIcon(icon);
+            pair = new IntPtr[] { LoadImage(IntPtr.Zero, path, 1, 16, 16, 0x10), LoadImage(IntPtr.Zero, path, 1, 32, 32, 0x10) };
+            if (!IsIconValid(pair[0]) || !IsIconValid(pair[1])) {
+                foreach (IntPtr icon in pair) if (icon != IntPtr.Zero) DestroyIcon(icon);
+                icons.Remove(path);
+                throw new InvalidOperationException("Could not load taskbar icons: " + path);
+            }
+            icons[path] = pair;
+            return pair;
+        }
+        public static bool WindowIconsValid(IntPtr window) {
+            return IsIconValid(Message(window, 0x7F, 0, IntPtr.Zero)) && IsIconValid(Message(window, 0x7F, 1, IntPtr.Zero));
+        }
+        public static bool NeedsApply(IntPtr window, string id, string iconPath) {
+            // Shell properties survive the helper that wrote them; its owned
+            // HICON resources do not. Every helper must claim each window anew.
+            if (!originals.ContainsKey(window)) return true;
+            IntPtr[] pair;
+            if (!icons.TryGetValue(iconPath, out pair) || !IsIconValid(pair[0]) || !IsIconValid(pair[1])) return true;
+            return ReadWindow(window, 5) != id || ReadWindow(window, 3) != iconPath + ",0" ||
+                Message(window, 0x7F, 0, IntPtr.Zero) != pair[0] || Message(window, 0x7F, 1, IntPtr.Zero) != pair[1];
+        }
         public static void Apply(IntPtr window, string id, string command, string displayName, string iconPath) {
+            var pair = LoadIcons(iconPath);
             var store = WindowStore(window);
             try {
                 if (!originals.ContainsKey(window)) {
                     var values = new string[Fields.Length];
                     for (int i = 0; i < Fields.Length; i++) values[i] = Read(store, Fields[i]);
-                    originals[window] = new Original { Values = values, Assigned = id, Small = Message(window, 0x7F, 0, IntPtr.Zero), Large = Message(window, 0x7F, 1, IntPtr.Zero) };
+                    bool inherited = values[3] == id || (values[3] != null && values[3].StartsWith("Tandem.Claude.", StringComparison.Ordinal));
+                    originals[window] = new Original { Values = inherited ? new string[Fields.Length] : values, Assigned = id,
+                        Small = inherited ? IntPtr.Zero : Message(window, 0x7F, 0, IntPtr.Zero),
+                        Large = inherited ? IntPtr.Zero : Message(window, 0x7F, 1, IntPtr.Zero) };
                 }
-                // Relaunch details must be in place before changing the identity.
+                // Install live icons and relaunch details before publishing the
+                // group identity, so the shell never sees dead HICON resources.
+                Message(window, 0x80, 0, pair[0]);
+                Message(window, 0x80, 1, pair[1]);
                 Write(store, 2, command); Write(store, 3, iconPath + ",0");
                 Write(store, 4, displayName); Write(store, 5, id);
-                if (!icons.ContainsKey(iconPath)) icons[iconPath] = new IntPtr[] {
-                    LoadImage(IntPtr.Zero, iconPath, 1, 16, 16, 0x10), LoadImage(IntPtr.Zero, iconPath, 1, 32, 32, 0x10) };
-                var pair = icons[iconPath];
-                if (pair[0] != IntPtr.Zero) Message(window, 0x80, 0, pair[0]);
-                if (pair[1] != IntPtr.Zero) Message(window, 0x80, 1, pair[1]);
             } finally { Marshal.ReleaseComObject(store); }
         }
         public static void RestoreAll() {
@@ -108,7 +143,8 @@ namespace Tandem.Claude {
                     try {
                         if (Read(store, 5) != pair.Value.Assigned) continue;
                         for (int i = 0; i < Fields.Length; i++) Write(store, Fields[i], pair.Value.Values[i]);
-                        Message(pair.Key, 0x80, 0, pair.Value.Small); Message(pair.Key, 0x80, 1, pair.Value.Large);
+                        Message(pair.Key, 0x80, 0, IsIconValid(pair.Value.Small) ? pair.Value.Small : IntPtr.Zero);
+                        Message(pair.Key, 0x80, 1, IsIconValid(pair.Value.Large) ? pair.Value.Large : IntPtr.Zero);
                     } finally { Marshal.ReleaseComObject(store); }
                 } catch (COMException) { }
             }

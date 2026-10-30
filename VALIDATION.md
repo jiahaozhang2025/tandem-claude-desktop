@@ -1,5 +1,13 @@
 # Validation
 
+## Running taskbar icon lifetime, October 30, 2026
+
+* All 86 Pester tests passed on Windows PowerShell 5.1 and PowerShell 7; production PSScriptAnalyzer checks passed. New native separate-process helper-exit and old-identity migration regressions reproduce dangling icon handles despite matching property strings. Missing icon files are rejected before metadata changes.
+* Before repair, the actual Claude taskbar showed a blue Account 2 button and a generic document Main button; both windows returned invalid HICON handles. Claiming new live handles made them valid, but the old Main group retained its generic image. A fresh stable v2 identity plus icons-before-identity publication restored orange Main and blue Account 2 in a taskbar screenshot.
+* Desktop screenshots and file-existence checks alone did not verify the running taskbar image. Live taskbar verification now complements the native regression checks.
+* Forced the installed shell helper to exit while both real Claude accounts stayed open: both icon-handle checks failed after exit and passed after starting the replacement helper. Claude parent PIDs 53992 and 65320 were unchanged. The same recovery check passed for both ChatGPT accounts. No vendor app was restarted or sent a message.
+
+
 ## Shell icon refresh verification, October 29, 2026
 
 * 83 Pester tests pass on Windows PowerShell 5.1 and PowerShell 7. New native tests verify hidden -> visible -> hidden transitions, reject visible tool-only windows, and deliver shell change notifications without changing shortcut arguments. These windows belong to the test runner, are placed off-screen and never activate a vendor app.
