@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.4 - 2026-10-29
+
+* Notify Windows with SHCNE_UPDATEITEM and SHCNF_FLUSH after creating or rewriting account shortcuts, including icon-only updates, so other Explorer views can refresh cached images.
+* Add native regression tests using an off-screen window that changes between hidden, visible and tool-window states, plus repeat-shortcut-update notification coverage.
+
+
 ## 0.3.3 - 2026-10-29
 
 * Fix All Accounts skipping a hidden background account: check visible taskbar windows, reactivate hidden accounts through their normal launch command, and verify a window appears.

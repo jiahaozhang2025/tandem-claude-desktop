@@ -112,6 +112,14 @@ function Stop-ProfileTaskbarHelper {
     throw 'The taskbar helper is still stopping. Try again in a few seconds.'
 }
 
+function Update-ShortcutShell {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private shell notification; shortcut creation caller checks ShouldProcess.')]
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    Initialize-TaskbarApi
+    [Tandem.Claude.TaskbarIdentity]::NotifyShortcutChanged($Path)
+}
+
 function Set-ShortcutTaskbarIdentity {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'Private helper; shortcut creation checks ShouldProcess.')]
     [CmdletBinding()]
@@ -485,6 +493,7 @@ function Save-MainSwitchShortcut {
             $link.WindowStyle = 7
             $link.Description = 'Switch to the primary Claude account with saved coding history'
             $link.Save()
+            Update-ShortcutShell -Path $path
             Set-ShortcutTaskbarIdentity -Path $path -Root $Root -Name main
             if (Test-Path -LiteralPath (Join-Path $Root 'taskbar.json')) {
                 $directory = Join-Path $Root 'main-launcher'
@@ -749,6 +758,7 @@ function Save-ProfileShortcut {
         $link.WindowStyle = 7
         $link.Description = "Claude, separate profile '$($Layout.Name)'"
         $link.Save()
+        Update-ShortcutShell -Path $path
         Set-ShortcutTaskbarIdentity -Path $path -Root $Layout.Root -Name $Layout.Name
         if (Test-Path -LiteralPath (Join-Path $Layout.Root 'taskbar.json')) {
             Copy-Item -LiteralPath $path -Destination (Join-Path $Layout.Dir 'taskbar-launch.lnk') -Force
@@ -769,6 +779,7 @@ function Write-ShortcutIcon {
         $link = $shell.CreateShortcut($Path)
         $link.IconLocation = $Icon + ',0'
         $link.Save()
+        Update-ShortcutShell -Path $path
     } finally {
         $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell)
     }
@@ -1207,6 +1218,7 @@ function New-ClaudeAllAccountsShortcut {
             $link.WindowStyle = 7
             $link.Description = 'Open all Claude accounts; leave running accounts untouched'
             $link.Save()
+            Update-ShortcutShell -Path $path
             $paths += $path
         }
     } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }

@@ -642,3 +642,56 @@ Describe 'Update safe launcher icons' {
         }
     }
 }
+
+
+Describe 'Shell refresh and real window lifecycle' {
+    It 'notifies Windows when Main and All Accounts links are rewritten' {
+        $root = Join-Path $TestDrive ('refresh-' + [guid]::NewGuid())
+        $folder = Join-Path $TestDrive ('links-' + [guid]::NewGuid())
+        $null = New-Item -ItemType Directory -Path $folder
+        Mock -ModuleName tandem-claude-desktop Get-ShortcutFolder { $folder }
+        Mock -ModuleName tandem-claude-desktop Get-ClaudePackage { [pscustomobject]@{ Exe = 'C:\Vendor\Claude.exe' } }
+        Mock -ModuleName tandem-claude-desktop Get-LauncherIcon { 'C:\local\icon.ico' }
+        Mock -ModuleName tandem-claude-desktop Update-ShortcutShell { }
+        foreach ($repeat in 1..2) {
+            $null = New-ClaudeAllAccountsShortcut -Root $root
+            & (Get-Module tandem-claude-desktop) { param($R) Save-MainSwitchShortcut -Root $R -App (Get-ClaudePackage) } $root
+        }
+        Should -Invoke -ModuleName tandem-claude-desktop Update-ShortcutShell -Times 4 -Exactly
+    }
+    It 'detects an actual window becoming visible, hidden and tool-only' {
+        if (-not ('TandemWindowFixture' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'WindowFixture.cs') }
+        InModuleScope tandem-claude-desktop {
+            $window = [TandemWindowFixture]::Create($false)
+            $tool = [TandemWindowFixture]::Create($true)
+            $owner = @([pscustomobject]@{ ProcessId = $PID })
+            try {
+                Test-DesktopWindow -Process $owner | Should -BeFalse
+                [TandemWindowFixture]::Show($window)
+                Test-DesktopWindow -Process $owner | Should -BeTrue
+                [TandemWindowFixture]::Hide($window)
+                Test-DesktopWindow -Process $owner | Should -BeFalse
+                [TandemWindowFixture]::Show($tool)
+                Test-DesktopWindow -Process $owner | Should -BeFalse
+            } finally {
+                $null = [TandemWindowFixture]::DestroyWindow($window)
+                $null = [TandemWindowFixture]::DestroyWindow($tool)
+            }
+        }
+    }
+    It 'delivers a native shell update without changing shortcut arguments' {
+        InModuleScope tandem-claude-desktop -Parameters @{ R = $TestDrive } {
+            param($R)
+            $path = Join-Path $R 'shell-refresh.lnk'
+            $shell = New-Object -ComObject WScript.Shell
+            try {
+                $link = $shell.CreateShortcut($path)
+                $link.TargetPath = Join-Path $env:SystemRoot 'System32\notepad.exe'
+                $link.Arguments = 'synthetic.txt'
+                $link.Save()
+                { Update-ShortcutShell -Path $path } | Should -Not -Throw
+                $shell.CreateShortcut($path).Arguments | Should -Be 'synthetic.txt'
+            } finally { $null = [Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
+        }
+    }
+}

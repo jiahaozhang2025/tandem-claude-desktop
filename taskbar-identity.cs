@@ -25,6 +25,7 @@ namespace Tandem.Claude {
         }
         [DllImport("shell32.dll")] static extern int SHGetPropertyStoreForWindow(IntPtr window, ref Guid iid, out PropertyStore store);
         [DllImport("ole32.dll")] static extern int PropVariantClear(ref Variant value);
+        [DllImport("shell32.dll")] static extern void SHChangeNotify(uint change, uint flags, IntPtr item1, IntPtr item2);
         delegate bool EnumCallback(IntPtr window, IntPtr data);
         [DllImport("user32.dll")] static extern bool EnumWindows(EnumCallback callback, IntPtr data);
         [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
@@ -115,12 +116,22 @@ namespace Tandem.Claude {
             foreach (var pair in icons.Values) foreach (var icon in pair) if (icon != IntPtr.Zero) DestroyIcon(icon);
             icons.Clear();
         }
+        public static void NotifyShortcutChanged(string path) {
+            if (String.IsNullOrEmpty(path)) throw new ArgumentException("A shortcut path is required", "path");
+            IntPtr item = Marshal.StringToHGlobalUni(path);
+            try {
+                // SHCNE_UPDATEITEM + SHCNF_PATHW | SHCNF_FLUSH. Rewriting a .lnk
+                // alone can leave other Explorer views displaying a cached icon.
+                SHChangeNotify(0x2000, 0x1005, item, IntPtr.Zero);
+            } finally { Marshal.FreeHGlobal(item); }
+        }
         public static void SetShortcut(string path, string id) {
             object link = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));
             try {
                 var file = (IPersistFile)link; file.Load(path, 2);
                 var store = (PropertyStore)link; Write(store, 5, id); store.Commit(); file.Save(path, true);
             } finally { Marshal.ReleaseComObject(link); }
+            NotifyShortcutChanged(path);
         }
         public static string ReadShortcut(string path) {
             object link = Activator.CreateInstance(Type.GetTypeFromCLSID(new Guid("00021401-0000-0000-C000-000000000046")));

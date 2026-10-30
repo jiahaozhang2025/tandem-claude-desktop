@@ -20,3 +20,9 @@ Under `%USERPROFILE%\tandem-claude-desktop`:
 * `handoff-state.json` and `handoff-backups` concern history transfer, not ordinary window activation. Do not delete them to repair an icon.
 
 Regression tests cover hidden background accounts, a removed vendor package, visibility timeouts that do not stop initialized accounts, and retained resources for taskbar pins. The earlier tests verified processes and already visible windows, which missed these recurrence paths.
+
+## Correct icon file but a stale displayed image
+
+Rewriting shortcut metadata alone can leave another Explorer view showing an old cached image. The launcher now sends a targeted SHCNE_UPDATEITEM notification with SHCNF_PATHW and SHCNF_FLUSH after shortcut creation or icon updates. It does not delete Windows icon databases or restart Explorer. If an icon still differs between Desktop, Start and taskbar, identify the affected surface: pinned copies and native app shortcuts can be distinct from the companion shortcuts.
+
+Native test windows now verify actual Windows visibility transitions and tool-window filtering. These regression checks exercise the causes observed here; they cannot prove that all future app or Windows releases will behave identically.

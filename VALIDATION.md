@@ -1,5 +1,12 @@
 # Validation
 
+## Shell icon refresh verification, October 29, 2026
+
+* 83 Pester tests pass on Windows PowerShell 5.1 and PowerShell 7. New native tests verify hidden -> visible -> hidden transitions, reject visible tool-only windows, and deliver shell change notifications without changing shortcut arguments. These windows belong to the test runner, are placed off-screen and never activate a vendor app.
+* Claude Main was visually confirmed with an orange icon in File Explorer's Desktop folder. All five cached ICO frames (16, 24, 32, 48, 256 pixels) contain visible image pixels. Explicit shell notifications were delivered to its Desktop and Start menu shortcuts.
+* Testing these known failure paths cannot guarantee compatibility with every future vendor or Windows update. Process/window states and failed activations remain logged for diagnosis.
+
+
 ## Recurring launch and icon fixes, October 29, 2026
 
 * 80 Pester tests pass on PowerShell 7. Regression tests simulate a running hidden account, visibility timeout without process termination, and removal of a vendor package after shortcut creation. Older colored icon resources are retained for pins.
